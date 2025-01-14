@@ -1,0 +1,1 @@
+Get-ChildItem -Path 'C:\path\to\directory' -Recurse | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-1) } | ForEach-Object { $_.FullName }
