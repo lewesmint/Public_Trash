@@ -22,10 +22,28 @@ def normalize_file_content(file_path):
         print(f"Error: Permission denied: {file_path}")
         return None
 
-def compare_files(file_list):
+def get_file_list(file_list_path):
     """
-    Compares the content of the given list of files and groups them by identical or differing content.
+    Reads the file containing the list of file paths.
     """
+    try:
+        with open(file_list_path, 'r') as file:
+            return [line.strip() for line in file if line.strip()]
+    except FileNotFoundError:
+        print(f"Error: File list not found: {file_list_path}")
+        return []
+    except PermissionError:
+        print(f"Error: Permission denied: {file_list_path}")
+        return []
+
+def compare_files(file_list_path):
+    """
+    Compares the content of files listed in the given file.
+    """
+    file_list = get_file_list(file_list_path)
+    if not file_list:
+        return [], []
+
     content_map = defaultdict(list)
 
     for file_path in file_list:
@@ -40,13 +58,13 @@ def compare_files(file_list):
     return identical_files, unique_files
 
 def main():
-    parser = argparse.ArgumentParser(description="Compare text files ignoring line endings and BOMs.")
+    parser = argparse.ArgumentParser(description="Compare files listed in a file, ignoring line endings and BOMs.")
     parser.add_argument(
-        "files", nargs='+', help="List of file paths to compare."
+        "file_list", help="Path to a file containing a list of file paths to compare."
     )
     args = parser.parse_args()
 
-    identical, unique = compare_files(args.files)
+    identical, unique = compare_files(args.file_list)
 
     print("\nIdentical Files:")
     if identical:
