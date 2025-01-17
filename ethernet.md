@@ -1,57 +1,40 @@
-# 802.1Q VLAN Header Structure
+# VLAN-Tagged Ethernet Frame Structure (802.1Q)
 
-| **Field**                  | **Bits**   | **Bytes**  | **Value (Example)**      | **Description**                                                                 |
-|----------------------------|------------|------------|--------------------------|---------------------------------------------------------------------------------|
-| **Tag Protocol Identifier (TPID)** | 16 bits   | 2 bytes   | `0x8100`                 | Indicates the frame is VLAN-tagged.                                             |
-| **Priority Code Point (PCP)**      | 3 bits    | 0.375 bytes | `0b100` (Priority 4)     | Frame priority (0 = lowest, 7 = highest).                                       |
-| **Drop Eligible Indicator (DEI)**  | 1 bit     | 0.125 bytes | `0b0`                    | Marks the frame as eligible for dropping under congestion.                      |
-| **VLAN Identifier (VID)**          | 12 bits   | 1.5 bytes  | `0b000011100010` (114)   | VLAN ID (1–4094, where 0 and 4095 are reserved).                                |
-
----
-
-# Ethernet Frame With VLAN Header
-
-| **Field**                  | **Size (Bytes)** | **Description**                                                                 |
-|----------------------------|------------------|---------------------------------------------------------------------------------|
-| **Destination MAC Address**| 6 bytes          | MAC address of the destination device.                                         |
-| **Source MAC Address**     | 6 bytes          | MAC address of the source device.                                              |
-| **TPID (Tag Protocol Identifier)**| 2 bytes  | Always `0x8100` to indicate a VLAN tag is present.                             |
-| **TCI (Tag Control Information)** | 2 bytes  | Contains PCP, DEI, and VLAN ID.                                                |
-| **Payload**                | Variable (46–1500 bytes)| Actual data being transmitted.                                                 |
-| **Frame Check Sequence (FCS)**| 4 bytes      | CRC value for error checking.                                                  |
-
-
-# Standard Ethernet Frame Structure (IEEE 802.3)
-
-| **Field**                  | **Bits**   | **Bytes**  | **Description**                                                                 |
-|----------------------------|------------|------------|---------------------------------------------------------------------------------|
-| **Preamble**               | 56 bits    | 7 bytes    | Synchronisation pattern for the receiver.                                       |
-| **Start of Frame Delimiter (SFD)** | 8 bits | 1 byte     | Marks the start of the frame.                                                   |
-| **Destination MAC Address**| 48 bits    | 6 bytes    | MAC address of the destination device.                                          |
-| **Source MAC Address**     | 48 bits    | 6 bytes    | MAC address of the source device.                                               |
-| **EtherType/Length**       | 16 bits    | 2 bytes    | Either the payload length or protocol type (e.g., IPv4, IPv6).                  |
-| **Payload**                | Variable   | 46–1500 bytes | Data being transmitted.                                                         |
-| **Frame Check Sequence (FCS)** | 32 bits | 4 bytes    | CRC for error checking.                                                         |
+| **Start Bit** | **Field Name**            | **Abbreviation** | **Bytes** | **Bits** | **Example Value**  | **Description**                                                                 |
+|---------------|---------------------------|------------------|-----------|----------|---------------------|---------------------------------------------------------------------------------|
+| 0             | Destination MAC Address  | Dest MAC         | 6         | 48       | `FF:FF:FF:FF:FF:FF` | MAC address of the destination device.                                         |
+| 48            | Source MAC Address       | Src MAC          | 6         | 48       | `00:11:22:33:44:55` | MAC address of the source device.                                              |
+| 96            | Tag Protocol Identifier  | TPID             | 2         | 16       | `0x8100`            | Indicates the frame is VLAN-tagged.                                            |
+| 112           | Tag Control Information  | TCI              | 2         | 16       | `0x0064` (VLAN 100) | Contains priority (PCP), DEI, and VLAN ID.                                     |
+| 128           | EtherType/Length         | EtherType        | 2         | 16       | `0x0800`            | Specifies the protocol type (e.g., IPv4 = 0x0800, ARP = 0x0806).               |
+| 144           | Payload/Data             | Data             | 46–1500   | 368–12000| `...`               | The actual data being transmitted.                                             |
+| Variable      | Frame Check Sequence     | FCS              | 4         | 32       | `0x12345678`        | CRC for error checking to ensure frame integrity.                              |
 
 ---
 
-# Ethernet Frame Overview
+# Preamble and SFD
 
-| **Field**                  | **Size (Bytes)** | **Description**                                                                 |
-|----------------------------|------------------|---------------------------------------------------------------------------------|
-| **Preamble**               | 7 bytes          | Synchronisation for the receiver.                                               |
-| **SFD**                    | 1 byte           | Marks the start of the frame.                                                   |
-| **Destination MAC Address**| 6 bytes          | MAC address of the destination device.                                          |
-| **Source MAC Address**     | 6 bytes          | MAC address of the source device.                                               |
-| **EtherType/Length**       | 2 bytes          | Protocol identifier (e.g., IPv4, ARP, etc.).                                    |
-| **Payload (MTU)**          | 46–1500 bytes    | The actual data being transmitted.                                              |
-| **FCS**                    | 4 bytes          | Cyclic redundancy check (CRC) for detecting errors.                             |
+| **Field Name**                | **Bytes** | **Bits** | **Example Value** | **Description**                                                                 |
+|--------------------------------|-----------|----------|--------------------|---------------------------------------------------------------------------------|
+| Preamble                      | 7         | 56       | `10101010` (repeated)| Synchronisation pattern for receiver alignment.                                 |
+| Start Frame Delimiter (SFD)    | 1         | 8        | `10101011`         | Marks the start of the Ethernet frame.                                         |
+
+
+# Standard Ethernet Frame Structure
+
+| **Start Bit** | **Field Name**            | **Abbreviation** | **Bytes** | **Bits** | **Example Value**  | **Description**                                                                 |
+|---------------|---------------------------|------------------|-----------|----------|---------------------|---------------------------------------------------------------------------------|
+| 0             | Destination MAC Address  | Dest MAC         | 6         | 48       | `FF:FF:FF:FF:FF:FF` | MAC address of the destination device.                                         |
+| 48            | Source MAC Address       | Src MAC          | 6         | 48       | `00:11:22:33:44:55` | MAC address of the source device.                                              |
+| 96            | EtherType/Length         | EtherType        | 2         | 16       | `0x0800`            | Specifies the protocol type (e.g., IPv4 = 0x0800, ARP = 0x0806).               |
+| 112           | Payload/Data             | Data             | 46–1500   | 368–12000| `...`               | The actual data being transmitted.                                             |
+| Variable      | Frame Check Sequence     | FCS              | 4         | 32       | `0x12345678`        | CRC for error checking to ensure frame integrity.                              |
 
 ---
 
-# Total Frame Size
+# Preamble and SFD
 
-| **Frame Component**        | **Size (Bytes)**   | **Description**                                                                 |
-|----------------------------|--------------------|---------------------------------------------------------------------------------|
-| **Minimum Frame Size**     | 64 bytes           | Includes header, minimum payload (46 bytes), and FCS.                          |
-| **Maximum Frame Size**     | 1518 bytes         | Includes header, maximum payload (1500 bytes), and FCS.                        |
+| **Field Name**                | **Bytes** | **Bits** | **Example Value** | **Description**                                                                 |
+|--------------------------------|-----------|----------|--------------------|---------------------------------------------------------------------------------|
+| Preamble                      | 7         | 56       | `10101010` (repeated)| Synchronisation pattern for receiver alignment.                                 |
+| Start Frame Delimiter (SFD)    | 1         | 8        | `10101011`         | Marks the start of the Ethernet frame.                                         |
