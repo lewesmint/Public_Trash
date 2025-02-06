@@ -1,1 +1,51 @@
-test.test
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <errno.h>
+#include <arpa/inet.h>
+#include <sys/select.h>
+
+int main() {
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    
+    struct sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(8080);
+    inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
+
+    connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr));
+
+    fd_set read_fds;
+    struct timeval timeout;
+    timeout.tv_sec = 5;   // 5 seconds timeout
+    timeout.tv_usec = 0;  // 0 microseconds
+
+    FD_ZERO(&read_fds);
+    FD_SET(sockfd, &read_fds);
+
+    printf("Waiting for data...\n");
+
+    int ret = select(sockfd + 1, &read_fds, NULL, NULL, &timeout);
+    if (ret == 0) {
+        printf("Timeout: No data received within 5 seconds\n");
+    } else if (ret > 0) {
+        // Data is available, call recv()
+        char buffer[1024];
+        ssize_t bytes_received = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
+        if (bytes_received > 0) {
+            buffer[bytes_received] = '\0';
+            printf("Received: %s\n", buffer);
+        } else if (bytes_received == 0) {
+            printf("Connection closed by peer\n");
+        } else {
+            perror("recv failed");
+        }
+    } else {
+        perror("select failed");
+    }
+
+    close(sockfd);
+    return 0;
+}
