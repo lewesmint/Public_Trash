@@ -2,22 +2,30 @@
 import socket
 import select
 import time
+import re
 
 
 def hex_to_bytes(s):
     """
-    Convert a hex string that may contain "0x" prefixes into bytes.
-    For example, "0x48 0x45 0x4c 0x4c 0x4f" becomes b'HELLO'.
+    Convert a hex string that may contain multiple "0x" prefixes into bytes.
+    
+    This function uses a regular expression to extract all groups of hex digits.
+    For example:
+      "0xABCD0xDEFA" -> b'\xab\xcd\xde\xfa'
+      "0x48454c4c4f" -> b'HELLO'
     """
-    tokens = s.split()
-    tokens = [token[2:] if token.lower().startswith("0x") else token for token in tokens]
-    return bytes.fromhex(" ".join(tokens))
+    # Find all groups of hex digits that may be preceded by "0x"
+    matches = re.findall(r'(?:0x)?([0-9A-Fa-f]+)', s)
+    # Join the matches with spaces so that bytes.fromhex() can process them
+    hex_str = " ".join(matches)
+    return bytes.fromhex(hex_str)
 
 
 def format_bytes_in_32bit_blocks(data):
     """
     Format bytes as hexadecimal in groups of 4 bytes, each prefixed with '0x'.
-    For example, b'\x01\x02\x03\x04\x05\x06' becomes '0x01020304 0x0506'.
+    For example, b'\x01\x02\x03\x04\x05\x06' becomes:
+      '0x01020304 0x0506'
     """
     groups = []
     for i in range(0, len(data), 4):
@@ -31,29 +39,35 @@ def main():
     host = 'localhost'
     port = 4200
 
+    # Create a TCP/IP socket and connect to the server
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         sock.connect((host, port))
         print("Connected to {}:{}".format(host, port))
     except socket.error as err:
-        print("Connection failed:", err)
+        print("Connection error:", err)
         return
 
     sock.setblocking(0)
 
-    # Define messages as hex strings (with "0x" prefixes) and convert them.
+    # Define messages as hex strings. Even if concatenated without spaces,
+    # our hex_to_bytes() function will extract the separate tokens.
     messages = [
-        hex_to_bytes("0x48 0x45 0x4c 0x4c 0x4f"),         # HELLO
-        hex_to_bytes("0x47 0x4f 0x4f 0x44 0x44 0x41 0x59"), # GOODDAY
-        hex_to_bytes("0x42 0x59 0x45 0x42 0x59 0x45")        # BYEBYE
+        hex_to_bytes("0x48454c4c4f"),         # HELLO
+        hex_to_bytes("0x474f4f44444159"),       # GOODDAY
+        hex_to_bytes("0x425945425945")          # BYEBYE
     ]
+    # For example, the following would also work:
+    # hex_to_bytes("0xABCD" + "0xDEFA")
+    # becomes hex_to_bytes("0xABCD0xDEFA")
+    # and returns b'\xab\xcd\xde\xfa'.
+
     msg_index = 0
-    next_send_time = time.time() + 5
+    next_send_time = time.time() + 5  # schedule first send in 5 seconds
 
     while True:
         now = time.time()
         timeout = max(0, next_send_time - now)
-
         readable, _, _ = select.select([sock], [], [], timeout)
 
         if readable:
