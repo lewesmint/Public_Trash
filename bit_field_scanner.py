@@ -29,19 +29,7 @@ class StructParser:
       2. Update it with preprocessor definitions:
              parser.update_definitions({"MAX_BUFFER_LEN": 5, "ITEM_3_BITS": 16})
       3. Parse struct definitions (one at a time) that may reference previously defined constants
-         or nested structs. For example:
-
-         my_struct = \"\"\"
-         typedef struct {
-             int item_1: 4;
-             int item_2: 4;
-             int item_3: 16;
-             char values[5];
-         } my_t;
-         \"\"\"
-
-         layout = parser.parse_struct(my_struct)
-
+         or nested structs.
       4. If a struct definition references an undefined constant or nested struct,
          an exception is thrown.
       5. You can export a parsed struct's layout to JSON:
@@ -91,13 +79,13 @@ class StructParser:
         Parses the preprocessed struct definition and computes its layout.
         Returns a dictionary containing:
           - struct_name, endianness, total_bits, total_bytes.
-          - A list of field descriptions. For each field:
-              * Bit-fields: name, type, bit_offset, bit_width, mask.
-              * Primitive fields: name, type, bit_offset, size (or element_size and total_bits if array).
-              * Nested struct fields: includes the nested layout.
+          - A list of field descriptions.
+            * For bit-fields: name, type, bit_offset, bit_width, mask.
+            * For primitive fields: name, type, bit_offset, size (or element_size and total_bits if array).
+            * For nested struct fields: includes the nested layout.
         """
         layout: Dict[str, Any] = {}
-        bit_masks: Dict[str, int] = {}      # Only for bit-fields.
+        bit_masks: Dict[str, int] = {}      # Computed mask for each field.
         bit_shifts: Dict[str, int] = {}     # Bit offset for each field.
         field_types: Dict[str, str] = {}    # Field types as declared.
         field_sizes: Dict[str, int] = {}    # For bit-fields: width; for primitives: per-element size.
@@ -202,6 +190,9 @@ class StructParser:
                     field_info["total_bits"] = field_sizes[name] * field_array_lengths[name]
                 else:
                     field_info["size"] = field_sizes[name]
+            # If the overall structure is 64 bits or less, add a mask for every field.
+            if layout["total_bits"] <= 64:
+                field_info["mask"] = hex(bit_masks[name])
             fields.append(field_info)
         layout["fields"] = fields
         return layout
@@ -235,6 +226,7 @@ class StructParser:
         layout = json.loads(json_str)
         self.struct_registry[layout["struct_name"]] = layout
 
+
 # === Test Cases ===
 if __name__ == "__main__":
     parser = StructParser()
@@ -252,6 +244,7 @@ if __name__ == "__main__":
     print("Test 1 - Layout for my_t:")
     print(parser.to_json("my_t"))
     # Expect: bit-fields for item_1, item_2, item_3 with masks; values field with array_length 5.
+    # Since total_bits is 64 or less, all fields will have a mask.
 
     # Test 2: Struct with undefined preprocessor constants.
     my_struct_bad = """
