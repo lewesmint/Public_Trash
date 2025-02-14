@@ -1,377 +1,320 @@
 import re
 import json
-import struct
 import sys
 from typing import Any, Dict, Optional
 
-# Define known primitive sizes (in bits)
-TYPE_SIZES = {
-    "char": 8,    # 1 byte = 8 bits
-    "short": 16,  # 2 bytes = 16 bits
-    "int": 32,    # 4 bytes = 32 bits
-    "long": 64    # 8 bytes = 64 bits
+# Known primitive sizes (in bits)
+TYPE_SIZES: Dict[str, int] = {
+    "char": 8,    # 1 byte
+    "short": 16,  # 2 bytes
+    "int": 32,    # 4 bytes
+    "long": 64    # 8 bytes
 }
 
-# Detect system endianness
-SYSTEM_ENDIANNESS = "little" if sys.byteorder == "little" else "big"
+# Default endianness based on system.
+SYSTEM_ENDIANNESS: str = "little" if sys.byteorder == "little" else "big"
 
+class StructParserError(Exception):
+    """Custom exception class for StructParser errors."""
+    pass
 
-class PreprocessorRegistry:
-    """Global registry for preprocessor definitions (constants)."""
-    _definitions: Dict[str, Any] = {}
-
-    @classmethod
-    def update(cls, defs: Dict[str, Any]) -> None:
-        cls._definitions.update(defs)
-
-    @classmethod
-    def get_definitions(cls) -> Dict[str, Any]:
-        return cls._definitions.copy()
-
-
-class BitFieldRegistry:
-    """A registry for storing parsed struct definitions."""
-    _registry: Dict[str, "BitFieldParser"] = {}
-
-    @classmethod
-    def register(cls, name: str, parser: "BitFieldParser") -> None:
-        cls._registry[name] = parser
-
-    @classmethod
-    def get(cls, name: str) -> Optional["BitFieldParser"]:
-        return cls._registry.get(name, None)
-
-    @classmethod
-    def exists(cls, name: str) -> bool:
-        return name in cls._registry
-
-
-class BitFieldParser:
+class StructParser:
     """
-    Parses a C struct definition (with bit-fields, arrays, nested structs, and comments)
-    and provides methods for encoding/decoding values and JSON serialization.
+    An instance-based parser that maintains registries for:
+      - Preprocessor definitions (constants)
+      - Parsed struct layouts
+
+    Usage:
+      1. Create an empty parser: parser = StructParser()
+      2. Update it with preprocessor definitions:
+             parser.update_definitions({"MAX_BUFFER_LEN": 5, "ITEM_3_BITS": 16})
+      3. Parse struct definitions (one at a time) that may reference previously defined constants
+         or nested structs. For example:
+
+         my_struct = \"\"\"
+         typedef struct {
+             int item_1: 4;
+             int item_2: 4;
+             int item_3: 16;
+             char values[5];
+         } my_t;
+         \"\"\"
+
+         layout = parser.parse_struct(my_struct)
+
+      4. If a struct definition references an undefined constant or nested struct,
+         an exception is thrown.
+      5. You can export a parsed struct's layout to JSON:
+             json_str = parser.to_json("my_t")
+      6. You can later import a JSON layout with import_from_json().
     """
-    def __init__(self, struct_definition: str, definitions: Optional[Dict[str, Any]] = None,
-                 endianness: str = SYSTEM_ENDIANNESS):
-        # Update global definitions if provided.
-        if definitions:
-            PreprocessorRegistry.update(definitions)
-        self.definitions = PreprocessorRegistry.get_definitions()
+    def __init__(self, endianness: str = SYSTEM_ENDIANNESS, definitions: Optional[Dict[str, Any]] = None):
+        self.endianness: str = endianness
+        self.preproc_defs: Dict[str, Any] = definitions.copy() if definitions else {}
+        self.struct_registry: Dict[str, Dict[str, Any]] = {}  # Maps struct name to layout dictionary.
 
-        # Preprocess: remove comments and substitute definitions
-        self.struct_definition = self._preprocess_definition(struct_definition)
-        self.endianness = endianness
-        self.struct_name = self._extract_struct_name()
-        self.bit_masks: Dict[str, int] = {}
-        self.bit_shifts: Dict[str, int] = {}
-        self.field_types: Dict[str, str] = {}
-        self.field_sizes: Dict[str, int] = {}  # in bits per element (or total for bit-fields)
-        self.field_array_lengths: Dict[str, Optional[int]] = {}  # None if not an array
-        self.nested_structs: Dict[str, "BitFieldParser"] = {}  # name -> parser for nested struct
-        self.total_bits: int = 0
-
-        # Keep track of which fields are bitfields.
-        self.bitfield_names = set()
-
-        self._parse_struct()
-        BitFieldRegistry.register(self.struct_name, self)
+    def update_definitions(self, defs: Dict[str, Any]) -> None:
+        """Update the parser with additional preprocessor definitions."""
+        self.preproc_defs.update(defs)
 
     def _preprocess_definition(self, definition: str) -> str:
-        """Remove C comments and substitute preprocessor definitions."""
-        # Remove single-line comments (// ...)
+        """Remove comments and substitute preprocessor constants.
+           Throws an exception if a referenced constant is missing.
+        """
+        # Remove single-line comments (// ...).
         definition = re.sub(r'//.*', '', definition)
-        # Remove multi-line comments (/* ... */)
+        # Remove multi-line comments (/* ... */).
         definition = re.sub(r'/\*.*?\*/', '', definition, flags=re.DOTALL)
-        # Substitute preprocessor definitions from the global registry.
-        for key, value in self.definitions.items():
+        # Substitute preprocessor definitions.
+        for key, value in self.preproc_defs.items():
             pattern = r'\b' + re.escape(key) + r'\b'
             definition = re.sub(pattern, str(value), definition)
+        # Check for unresolved tokens in array declarations.
+        unresolved = re.findall(r'\[([A-Za-z_][A-Za-z0-9_]*)]', definition)
+        if unresolved:
+            raise StructParserError(f"Preprocessor constant(s) {unresolved} not defined.")
         return definition.strip()
 
-    def _extract_struct_name(self) -> str:
-        """Extract the struct name from a typedef definition."""
-        match = re.search(
-            r'typedef\s+struct\s*{[^}]*}\s*(\w+)\s*;',
-            self.struct_definition,
-            re.DOTALL
-        )
+    @staticmethod
+    def _extract_struct_name(definition: str) -> str:
+        """
+        Extract the struct name from a typedef declaration.
+        Expects a declaration like: typedef struct { ... } my_t;
+        """
+        match = re.search(r'typedef\s+struct\s*{[^}]*}\s*(\w+)\s*;', definition, re.DOTALL)
         if match:
             return match.group(1)
-        raise ValueError("Could not determine struct name from typedef.")
+        raise StructParserError("Could not determine struct name.")
 
-    def _parse_struct(self) -> None:
+    def _parse_struct(self, definition: str) -> Dict[str, Any]:
         """
-        Parse the struct definition to build:
-          - bit_masks and bit_shifts for each field,
-          - field types and sizes (including handling arrays),
-          - nested struct references.
+        Parses the preprocessed struct definition and computes its layout.
+        Returns a dictionary containing:
+          - struct_name, endianness, total_bits, total_bytes.
+          - A list of field descriptions. For each field:
+              * Bit-fields: name, type, bit_offset, bit_width, mask.
+              * Primitive fields: name, type, bit_offset, size (or element_size and total_bits if array).
+              * Nested struct fields: includes the nested layout.
         """
-        bit_position = 0
+        layout: Dict[str, Any] = {}
+        bit_masks: Dict[str, int] = {}      # Only for bit-fields.
+        bit_shifts: Dict[str, int] = {}     # Bit offset for each field.
+        field_types: Dict[str, str] = {}    # Field types as declared.
+        field_sizes: Dict[str, int] = {}    # For bit-fields: width; for primitives: per-element size.
+        field_array_lengths: Dict[str, Optional[int]] = {}  # None if not an array.
+        nested_structs: Dict[str, Dict[str, Any]] = {}        # For nested struct fields.
+        bitfield_names: set = set()         # Names of fields declared as bit-fields.
+        total_bits: int = 0
 
-        # Regex for bit-fields: e.g. "int count : 10;"
+        # Replace commas with semicolons for flexibility.
+        definition = definition.replace(',', ';')
+
+        # Regex for bit-fields (fields with colon), e.g.:
+        #     int item_1: 4;
         bit_field_pattern = re.compile(r'(\w+)\s+(\w+)\s*:\s*(\d+)\s*;')
-        # Regex for normal fields (non-bit-fields, optionally with arrays),
-        # using negative lookahead to skip fields with a colon.
-        normal_field_pattern = re.compile(
-            r'(\w+)\s+(\w+)(?!\s*:)\s*(\[[^\]]+\])?\s*;'
-        )
+        # Regex for normal fields (without colon) with optional array, e.g.:
+        #     char values[5];
+        normal_field_pattern = re.compile(r'(\w+)\s+(\w+)(?!\s*:)\s*(\[[^]]+])?\s*;')
 
         # Process bit-fields.
-        for dtype, name, size_str in bit_field_pattern.findall(self.struct_definition):
+        for dtype, name, size_str in bit_field_pattern.findall(definition):
             size = int(size_str)
-            self.field_types[name] = dtype
-            self.field_sizes[name] = size  # For bit-fields, total size equals the bit-width.
-            self.field_array_lengths[name] = None  # Not an array.
-            self.bit_masks[name] = ((1 << size) - 1) << bit_position
-            self.bit_shifts[name] = bit_position
-            bit_position += size
-            self.bitfield_names.add(name)  # Mark this as a bit-field.
+            field_types[name] = dtype
+            field_sizes[name] = size
+            field_array_lengths[name] = None  # Bit-fields are not arrays.
+            bit_masks[name] = ((1 << size) - 1) << total_bits
+            bit_shifts[name] = total_bits
+            total_bits += size
+            bitfield_names.add(name)
 
-        # Process normal fields (which may include arrays or nested structs).
-        for match in normal_field_pattern.findall(self.struct_definition):
-            dtype, name, array_part = match
-            # Skip if this field was already processed as a bit-field.
-            if name in self.field_types:
-                continue
-
-            # Check if this field is a nested struct (dtype exists in registry)
-            if BitFieldRegistry.exists(dtype):
-                nested_parser = BitFieldRegistry.get(dtype)
-                self.nested_structs[name] = nested_parser
-                # Check if it's declared as an array.
+        # Process normal fields.
+        for dtype, name, array_part in normal_field_pattern.findall(definition):
+            if name in field_types:
+                continue  # Already processed as bit-field.
+            # Check for nested struct.
+            if dtype in self.struct_registry:
+                nested_layout = self.struct_registry[dtype]
+                nested_structs[name] = nested_layout
                 if array_part:
                     array_length = int(array_part.strip("[]").strip())
-                    self.field_array_lengths[name] = array_length
-                    total_field_bits = nested_parser.total_bits * array_length
+                    field_array_lengths[name] = array_length
+                    total_field_bits = nested_layout["total_bits"] * array_length
                 else:
-                    self.field_array_lengths[name] = None
-                    total_field_bits = nested_parser.total_bits
-
-                # Align bit_position to the nested struct's total bit width if needed.
-                if bit_position % nested_parser.total_bits != 0:
-                    padding = nested_parser.total_bits - (bit_position % nested_parser.total_bits)
-                    bit_position += padding
-
-                self.field_types[name] = dtype  # Store nested struct type name.
-                self.field_sizes[name] = total_field_bits
-                self.bit_shifts[name] = bit_position
-                self.bit_masks[name] = ((1 << total_field_bits) - 1) << bit_position
-                bit_position += total_field_bits
+                    field_array_lengths[name] = None
+                    total_field_bits = nested_layout["total_bits"]
+                # Align total_bits to nested struct's total_bits.
+                if total_bits % nested_layout["total_bits"] != 0:
+                    padding = nested_layout["total_bits"] - (total_bits % nested_layout["total_bits"])
+                    total_bits += padding
+                field_types[name] = dtype
+                field_sizes[name] = total_field_bits
+                bit_shifts[name] = total_bits
+                bit_masks[name] = ((1 << total_field_bits) - 1) << total_bits
+                total_bits += total_field_bits
             else:
-                # Primitive field.
-                base_size = TYPE_SIZES.get(dtype)
-                if base_size is None:
-                    raise ValueError(f"Unknown type: {dtype}")
-
-                # Check if this is an array field.
+                # Must be a primitive type.
+                if dtype not in TYPE_SIZES:
+                    raise StructParserError(f"Unknown type '{dtype}' in field '{name}'.")
+                base_size = TYPE_SIZES[dtype]
                 if array_part:
                     array_length = int(array_part.strip("[]").strip())
-                    self.field_array_lengths[name] = array_length
+                    field_array_lengths[name] = array_length
                     total_field_bits = base_size * array_length
                 else:
-                    self.field_array_lengths[name] = None
+                    field_array_lengths[name] = None
                     total_field_bits = base_size
+                # Align total_bits to base_size.
+                if total_bits % base_size != 0:
+                    padding = base_size - (total_bits % base_size)
+                    total_bits += padding
+                field_types[name] = dtype
+                field_sizes[name] = base_size
+                bit_shifts[name] = total_bits
+                bit_masks[name] = ((1 << total_field_bits) - 1) << total_bits
+                total_bits += total_field_bits
 
-                # Align to the primitive type's size.
-                if bit_position % base_size != 0:
-                    padding = base_size - (bit_position % base_size)
-                    bit_position += padding
+        layout["struct_name"] = self._extract_struct_name(definition)
+        layout["endianness"] = self.endianness
+        layout["total_bits"] = total_bits
+        layout["total_bytes"] = (total_bits + 7) // 8
 
-                self.field_types[name] = dtype
-                self.field_sizes[name] = base_size  # size per element
-                self.bit_shifts[name] = bit_position
-                self.bit_masks[name] = ((1 << total_field_bits) - 1) << bit_position
-                bit_position += total_field_bits
-
-        self.total_bits = bit_position
-
-    def to_json(self, values: Dict[str, Any]) -> str:
-        """Return a JSON representation of the struct (with field metadata and values)."""
         fields = []
-        for name in self.bit_masks.keys():
-            if name in self.nested_structs:
-                # Handle nested structs.
-                if self.field_array_lengths.get(name) is not None:
-                    nested_values = values.get(name, [])
-                    nested_json_list = [
-                        json.loads(self.nested_structs[name].to_json(elem))
-                        for elem in nested_values
-                    ]
-                    field_info = {
-                        "name": name,
-                        "type": self.nested_structs[name].struct_name,
-                        "array_length": self.field_array_lengths.get(name),
-                        "nested": nested_json_list
-                    }
+        for name in field_types:
+            field_info: Dict[str, Any] = {
+                "name": name,
+                "type": field_types[name],
+                "bit_offset": bit_shifts[name],
+            }
+            if name in nested_structs:
+                field_info["nested"] = nested_structs[name]
+                if field_array_lengths[name] is not None:
+                    field_info["array_length"] = field_array_lengths[name]
+                    field_info["total_bits"] = field_sizes[name]
                 else:
-                    nested_values = values.get(name, {})
-                    nested_json = json.loads(self.nested_structs[name].to_json(nested_values))
-                    field_info = {
-                        "name": name,
-                        "type": self.nested_structs[name].struct_name,
-                        "array_length": None,
-                        "nested": nested_json
-                    }
+                    field_info["total_bits"] = field_sizes[name]
+            elif name in bitfield_names:
+                field_info["bit_width"] = field_sizes[name]
+                field_info["mask"] = hex(bit_masks[name])
             else:
-                field_info = {
-                    "name": name,
-                    "type": self.field_types[name],
-                    "size_per_element": (self.field_sizes[name]
-                                         if self.field_array_lengths.get(name) is None
-                                         else TYPE_SIZES[self.field_types[name]]),
-                    "array_length": self.field_array_lengths.get(name),
-                    "bit_offset": self.bit_shifts[name]
-                }
-                # Only include the mask if this field is a bitfield.
-                if name in self.bitfield_names:
-                    field_info["mask"] = hex(self.bit_masks[name])
-                field_info["value"] = values.get(name, 0)
+                if field_array_lengths[name] is not None:
+                    field_info["array_length"] = field_array_lengths[name]
+                    field_info["element_size"] = field_sizes[name]
+                    field_info["total_bits"] = field_sizes[name] * field_array_lengths[name]
+                else:
+                    field_info["size"] = field_sizes[name]
             fields.append(field_info)
+        layout["fields"] = fields
+        return layout
 
-        data = {
-            "struct_name": self.struct_name,
-            "endianness": self.endianness,
-            "total_bits": self.total_bits,
-            "total_bytes": (self.total_bits + 7) // 8,
-            "fields": fields
-        }
-        return json.dumps(data, indent=4)
-
-    def encode(self, values: Dict[str, Any]) -> bytes:
+    def parse_struct(self, struct_definition: str) -> Dict[str, Any]:
         """
-        Pack the provided values (including arrays and nested structs) into a binary
-        representation according to the calculated bit layout.
+        Parse a C struct definition string.
+        The definition may reference preprocessor constants and nested struct types that must have been
+        previously defined in this parser.
+        Returns a dictionary describing the layout and registers the struct in the instance registry.
         """
-        packed_value = 0
-        for name in self.bit_masks.keys():
-            shift = self.bit_shifts[name]
-            if name in self.nested_structs:
-                nested_parser = self.nested_structs[name]
-                if self.field_array_lengths.get(name) is not None:
-                    arr = values.get(name, [])
-                    for i, elem in enumerate(arr):
-                        nested_bytes = nested_parser.encode(elem)
-                        nested_int = int.from_bytes(nested_bytes, byteorder=self.endianness)
-                        packed_value |= nested_int << (shift + i * nested_parser.total_bits)
-                else:
-                    nested_bytes = nested_parser.encode(values.get(name, {}))
-                    nested_int = int.from_bytes(nested_bytes, byteorder=self.endianness)
-                    packed_value |= nested_int << shift
-            else:
-                dtype = self.field_types[name]
-                base_bits = TYPE_SIZES[dtype]
-                if self.field_array_lengths.get(name) is not None:
-                    arr = values.get(name, [])
-                    for i, elem in enumerate(arr):
-                        elem_val = int(elem) & ((1 << base_bits) - 1)
-                        packed_value |= elem_val << (shift + i * base_bits)
-                else:
-                    elem_val = int(values.get(name, 0)) & ((1 << base_bits) - 1)
-                    packed_value |= elem_val << shift
-        byte_length = (self.total_bits + 7) // 8
-        return packed_value.to_bytes(byte_length, byteorder=self.endianness)
+        processed = self._preprocess_definition(struct_definition)
+        layout = self._parse_struct(processed)
+        # Register by typedef name.
+        struct_name = layout["struct_name"]
+        self.struct_registry[struct_name] = layout
+        return layout
 
-    def decode(self, binary_data: bytes) -> Dict[str, Any]:
+    def to_json(self, struct_name: str) -> str:
         """
-        Unpack a binary value into a dictionary of field values.
-        Array fields return lists; nested structs return dictionaries.
+        Return a JSON string representing the layout of the struct with the given name.
         """
-        packed_value = int.from_bytes(binary_data, byteorder=self.endianness)
-        result: Dict[str, Any] = {}
-        for name in self.bit_masks.keys():
-            shift = self.bit_shifts[name]
-            mask = self.bit_masks[name]
-            field_int = (packed_value & mask) >> shift
+        if struct_name not in self.struct_registry:
+            raise StructParserError(f"Struct '{struct_name}' not found in registry.")
+        return json.dumps(self.struct_registry[struct_name], indent=4)
 
-            if name in self.nested_structs:
-                nested_parser = self.nested_structs[name]
-                if self.field_array_lengths.get(name) is not None:
-                    arr = []
-                    total = self.field_array_lengths[name]
-                    for i in range(total):
-                        elem_int = (field_int >> (i * nested_parser.total_bits)) & ((1 << nested_parser.total_bits) - 1)
-                        elem_bytes = elem_int.to_bytes((nested_parser.total_bits + 7) // 8, byteorder=self.endianness)
-                        arr.append(nested_parser.decode(elem_bytes))
-                    result[name] = arr
-                else:
-                    elem_bytes = field_int.to_bytes((nested_parser.total_bits + 7) // 8, byteorder=self.endianness)
-                    result[name] = nested_parser.decode(elem_bytes)
-            else:
-                dtype = self.field_types[name]
-                base_bits = TYPE_SIZES[dtype]
-                if self.field_array_lengths.get(name) is not None:
-                    arr = []
-                    total = self.field_array_lengths[name]
-                    for i in range(total):
-                        elem_val = (field_int >> (i * base_bits)) & ((1 << base_bits) - 1)
-                        arr.append(elem_val)
-                    result[name] = arr
-                else:
-                    result[name] = field_int
-        return result
+    def import_from_json(self, json_str: str) -> None:
+        """
+        Import a struct layout from a JSON string and register it.
+        """
+        layout = json.loads(json_str)
+        self.struct_registry[layout["struct_name"]] = layout
 
-
-# === Example usage ===
+# === Test Cases ===
 if __name__ == "__main__":
-    # Preprocessor definitions (could be used for array sizes or bit-field widths)
-    definitions = {
-        "NUM_ITEMS": 3,
-        "MAX_BUFFER": 256,
-        "FLAG_WIDTH": 2
-    }
+    parser = StructParser()
 
-    # Define a sub-struct (nested struct)
-    sub_struct = """
+    # Test 1: Simple struct with bit-fields and an array.
+    my_struct = """
     typedef struct {
-        int sub_flag : FLAG_WIDTH;  // use preprocessor constant for bit-width
-        short sub_value : 5;
-    } sub_t;
+        int item_1: 4;
+        int item_2: 4;
+        int item_3: 16;
+        char values[5];
+    } my_t;
     """
+    layout1 = parser.parse_struct(my_struct)
+    print("Test 1 - Layout for my_t:")
+    print(parser.to_json("my_t"))
+    # Expect: bit-fields for item_1, item_2, item_3 with masks; values field with array_length 5.
 
-    # Define a main struct that uses:
-    # - Primitive bit-fields and a normal field,
-    # - An array field (using a preprocessor definition for size),
-    # - A nested struct and an array of nested structs,
-    # - And a char buffer declared using a constant.
-    main_struct = """
+    # Test 2: Struct with undefined preprocessor constants.
+    my_struct_bad = """
     typedef struct {
-        char flag : 1;
-        int count : 10;
-        int arr[NUM_ITEMS]; // array of ints
-        sub_t nested;       // a nested struct
-        sub_t nest_arr[NUM_ITEMS]; // array of nested structs
-        char buffer[MAX_BUFFER];   // array of chars
-        short error_code;
-        int timestamp;
-    } main_t;
+        int item_1: 4;
+        int item_2: 4;
+        int item_3: ITEM_3_BITS;
+        char values[MAX_BUFFER_LEN];
+    } my_t_bad;
     """
+    try:
+        parser.parse_struct(my_struct_bad)
+    except StructParserError as e:
+        print("\nTest 2 - Caught exception for undefined constants (expected):", e)
 
-    # Parse the sub-struct first.
-    sub_parser = BitFieldParser(sub_struct, definitions=definitions)
-    # Then parse the main struct.
-    main_parser = BitFieldParser(main_struct, definitions=definitions)
+    # Now update definitions so that ITEM_3_BITS and MAX_BUFFER_LEN are defined.
+    parser.update_definitions({"ITEM_3_BITS": 16, "MAX_BUFFER_LEN": 5})
+    try:
+        layout2 = parser.parse_struct(my_struct_bad)
+        print("\nTest 2 - Layout for my_t_bad after updating definitions:")
+        print(parser.to_json("my_t_bad"))
+    except StructParserError as e:
+        print("Test 2 - Unexpected exception:", e)
 
-    # Example data for main_t
-    values = {
-        "flag": 1,
-        "count": 100,
-        "arr": [10, 20, 30],
-        "nested": {"sub_flag": 3, "sub_value": 15},
-        "nest_arr": [
-            {"sub_flag": 1, "sub_value": 5},
-            {"sub_flag": 2, "sub_value": 10},
-            {"sub_flag": 3, "sub_value": 15}
-        ],
-        "buffer": [ord(c) for c in "Hello, world!"[:definitions["MAX_BUFFER"]]],  # example buffer data
-        "error_code": 500,
-        "timestamp": 1616161616
-    }
+    # Test 3: Nested struct dependency.
+    my_outer = """
+    typedef struct {
+        my_inner_t item_1;
+        my_inner_t item_2;
+    } my_outer_t;
+    """
+    try:
+        parser.parse_struct(my_outer)
+    except StructParserError as e:
+        print("\nTest 3 - Caught exception for undefined nested struct (expected):", e)
 
-    encoded = main_parser.encode(values)
-    print("Encoded Hex:", encoded.hex())
+    # Now define the nested struct.
+    my_inner = """
+    typedef struct {
+        int x;
+        int y;
+    } my_inner_t;
+    """
+    parser.parse_struct(my_inner)
+    # Parse outer struct again; should now succeed.
+    layout3 = parser.parse_struct(my_outer)
+    print("\nTest 3 - Layout for my_outer_t after defining my_inner_t:")
+    print(parser.to_json("my_outer_t"))
 
-    decoded = main_parser.decode(encoded)
-    print("Decoded Values:", decoded)
-
-    json_repr = main_parser.to_json(values)
-    print("JSON Representation:\n", json_repr)
+    # Test 4: Nested struct array.
+    my_nested_array = """
+    typedef struct {
+        my_inner_t a;
+        my_inner_t b;
+    } my_nested_t;
+    """
+    parser.parse_struct(my_nested_array)
+    my_outer2 = """
+    typedef struct {
+        my_nested_t arr[3];
+        int z;
+    } my_outer2_t;
+    """
+    layout4 = parser.parse_struct(my_outer2)
+    print("\nTest 4 - Layout for my_outer2_t (nested struct array):")
+    print(parser.to_json("my_outer2_t"))
