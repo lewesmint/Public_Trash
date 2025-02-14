@@ -186,21 +186,36 @@ class BitFieldParser:
         fields = []
         for name in self.bit_masks.keys():
             if name in self.nested_structs:
-                # For nested structs, call to_json recursively.
-                nested_values = values.get(name, {})
-                nested_json = json.loads(self.nested_structs[name].to_json(nested_values))
-                field_info = {
-                    "name": name,
-                    "type": self.nested_structs[name].struct_name,
-                    "array_length": self.field_array_lengths.get(name),
-                    "nested": nested_json
-                }
+                # Check if the nested struct is an array field.
+                if self.field_array_lengths.get(name) is not None:
+                    nested_values = values.get(name, [])
+                    # Process each element in the array.
+                    nested_json_list = [
+                        json.loads(self.nested_structs[name].to_json(elem))
+                        for elem in nested_values
+                    ]
+                    field_info = {
+                        "name": name,
+                        "type": self.nested_structs[name].struct_name,
+                        "array_length": self.field_array_lengths.get(name),
+                        "nested": nested_json_list
+                    }
+                else:
+                    nested_values = values.get(name, {})
+                    nested_json = json.loads(self.nested_structs[name].to_json(nested_values))
+                    field_info = {
+                        "name": name,
+                        "type": self.nested_structs[name].struct_name,
+                        "array_length": None,
+                        "nested": nested_json
+                    }
             else:
                 field_info = {
                     "name": name,
                     "type": self.field_types[name],
-                    "size_per_element": self.field_sizes[name]
-                    if self.field_array_lengths[name] is None else TYPE_SIZES[self.field_types[name]],
+                    "size_per_element": (self.field_sizes[name]
+                                         if self.field_array_lengths.get(name) is None
+                                         else TYPE_SIZES[self.field_types[name]]),
                     "array_length": self.field_array_lengths.get(name),
                     "bit_offset": self.bit_shifts[name],
                     "mask": hex(self.bit_masks[name]),
@@ -226,10 +241,8 @@ class BitFieldParser:
         for name in self.bit_masks.keys():
             shift = self.bit_shifts[name]
             if name in self.nested_structs:
-                # Handle nested struct.
                 nested_parser = self.nested_structs[name]
                 if self.field_array_lengths.get(name) is not None:
-                    # Array of nested structs.
                     arr = values.get(name, [])
                     for i, elem in enumerate(arr):
                         nested_bytes = nested_parser.encode(elem)
@@ -240,11 +253,9 @@ class BitFieldParser:
                     nested_int = int.from_bytes(nested_bytes, byteorder=self.endianness)
                     packed_value |= nested_int << shift
             else:
-                # Primitive field.
                 dtype = self.field_types[name]
                 base_bits = TYPE_SIZES[dtype]
                 if self.field_array_lengths.get(name) is not None:
-                    # Array field.
                     arr = values.get(name, [])
                     for i, elem in enumerate(arr):
                         elem_val = int(elem) & ((1 << base_bits) - 1)
