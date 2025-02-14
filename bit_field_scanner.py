@@ -70,6 +70,9 @@ class BitFieldParser:
         self.nested_structs: Dict[str, "BitFieldParser"] = {}  # name -> parser for nested struct
         self.total_bits: int = 0
 
+        # Keep track of which fields are bitfields.
+        self.bitfield_names = set()
+
         self._parse_struct()
         BitFieldRegistry.register(self.struct_name, self)
 
@@ -122,6 +125,7 @@ class BitFieldParser:
             self.bit_masks[name] = ((1 << size) - 1) << bit_position
             self.bit_shifts[name] = bit_position
             bit_position += size
+            self.bitfield_names.add(name)  # Mark this as a bit-field.
 
         # Process normal fields (which may include arrays or nested structs).
         for match in normal_field_pattern.findall(self.struct_definition):
@@ -186,10 +190,9 @@ class BitFieldParser:
         fields = []
         for name in self.bit_masks.keys():
             if name in self.nested_structs:
-                # Check if the nested struct is an array field.
+                # Handle nested structs.
                 if self.field_array_lengths.get(name) is not None:
                     nested_values = values.get(name, [])
-                    # Process each element in the array.
                     nested_json_list = [
                         json.loads(self.nested_structs[name].to_json(elem))
                         for elem in nested_values
@@ -217,10 +220,12 @@ class BitFieldParser:
                                          if self.field_array_lengths.get(name) is None
                                          else TYPE_SIZES[self.field_types[name]]),
                     "array_length": self.field_array_lengths.get(name),
-                    "bit_offset": self.bit_shifts[name],
-                    "mask": hex(self.bit_masks[name]),
-                    "value": values.get(name, 0)
+                    "bit_offset": self.bit_shifts[name]
                 }
+                # Only include the mask if this field is a bitfield.
+                if name in self.bitfield_names:
+                    field_info["mask"] = hex(self.bit_masks[name])
+                field_info["value"] = values.get(name, 0)
             fields.append(field_info)
 
         data = {
