@@ -40,6 +40,7 @@ class StructParser:
         self.endianness: str = endianness
         self.preproc_defs: Dict[str, Any] = definitions.copy() if definitions else {}
         self.struct_registry: Dict[str, Dict[str, Any]] = {}  # Maps struct name to layout dictionary.
+        self.field_symbols: Dict[str, Dict[int, str]] = {}  # Maps "struct_name.field_name" to symbolic values.
 
     def update_definitions(self, defs: Dict[str, Any]) -> None:
         """Update the parser with additional preprocessor definitions."""
@@ -167,6 +168,7 @@ class StructParser:
         layout["total_bytes"] = (total_bits + 7) // 8
 
         fields = []
+        fields_by_name = {}
         for name in field_types:
             field_info: Dict[str, Any] = {
                 "name": name,
@@ -190,11 +192,14 @@ class StructParser:
                     field_info["total_bits"] = field_sizes[name] * field_array_lengths[name]
                 else:
                     field_info["size"] = field_sizes[name]
-            # If the overall structure is 64 bits or less, add a mask for every field.
+            # If the overall structure has 64 bits or fewer, add a mask for every field.
             if layout["total_bits"] <= 64:
                 field_info["mask"] = hex(bit_masks[name])
             fields.append(field_info)
+            fields_by_name[name] = field_info
+
         layout["fields"] = fields
+        layout["fields_by_name"] = fields_by_name
         return layout
 
     def parse_struct(self, struct_definition: str) -> Dict[str, Any]:
@@ -225,6 +230,42 @@ class StructParser:
         """
         layout = json.loads(json_str)
         self.struct_registry[layout["struct_name"]] = layout
+
+    def associate_field_symbols(self, struct_name: str, field_name: str, symbols: Dict[int, str]) -> None:
+        """Associate a field with symbolic values."""
+        key = f"{struct_name}.{field_name}"
+        self.field_symbols[key] = symbols
+
+    def get_symbol(self, struct_name: str, field_name: str, value: int) -> str:
+        """Return the symbolic name for a given field value."""
+        key = f"{struct_name}.{field_name}"
+        if key in self.field_symbols and value in self.field_symbols[key]:
+            return self.field_symbols[key][value]
+        raise StructParserError(f"No symbolic value found for field '{field_name}' in struct '{struct_name}' and value '{value}'.")
+
+    def get_field(self, struct_name: str, field_name: str) -> Dict[str, Any]:
+        """
+        Retrieve field metadata from a specific struct by field name.
+        """
+        if struct_name not in self.struct_registry:
+            raise StructParserError(f"Struct '{struct_name}' not found in registry.")
+        layout = self.struct_registry[struct_name]
+        if "fields_by_name" not in layout:
+            raise StructParserError(f"Struct '{struct_name}' does not have 'fields_by_name' mapping.")
+        if field_name not in layout["fields_by_name"]:
+            raise StructParserError(f"Field '{field_name}' not found in struct '{struct_name}'.")
+        return layout["fields_by_name"][field_name]
+
+    def get_field_by_path(self, field_path: str) -> Dict[str, Any]:
+        """
+        Retrieve field metadata using dot notation (e.g., "my_struct.my_field").
+        """
+        parts = field_path.split('.')
+        if len(parts) < 2:
+            raise StructParserError(f"Invalid field path '{field_path}'. Must be in the format 'struct_name.field_name'.")
+        struct_name = parts[0]
+        field_name = parts[1]
+        return self.get_field(struct_name, field_name)
 
 
 # === Test Cases ===
@@ -311,3 +352,36 @@ if __name__ == "__main__":
     layout4 = parser.parse_struct(my_outer2)
     print("\nTest 4 - Layout for my_outer2_t (nested struct array):")
     print(parser.to_json("my_outer2_t"))
+
+    # Test 5: Field symbol association and lookup.
+    my_struct_with_symbols = """
+    typedef struct {
+        int status;
+        int error_code;
+    } my_symbolic_t;
+    """
+    parser.parse_struct(my_struct_with_symbols)
+    parser.associate_field_symbols("my_symbolic_t", "status", {
+        0: "OK",
+        1: "WARNING",
+        2: "ERROR"
+    })
+    try:
+        symbol = parser.get_symbol("my_symbolic_t", "status", 1)
+        print("\nTest 5 - Symbolic name for 'status' with value 1:", symbol)
+    except StructParserError as e:
+        print("Test 5 - Unexpected exception:", e)
+
+    # Test 6: Field lookup by name.
+    try:
+        status_field = parser.get_field("my_symbolic_t", "status")
+        print("\nTest 6 - Field 'status' in 'my_symbolic_t':", status_field)
+    except StructParserError as e:
+        print("Test 6 - Unexpected exception:", e)
+
+    # Test 7: Field lookup by path.
+    try:
+        status_field_by_path = parser.get_field_by_path("my_symbolic_t.status")
+        print("\nTest 7 - Field 'status' by path in 'my_symbolic_t':", status_field_by_path)
+    except StructParserError as e:
+        print("Test 7 - Unexpected exception:", e)
