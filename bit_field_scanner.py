@@ -42,9 +42,10 @@ class StructParser:
         self.struct_registry: Dict[str, Dict[str, Any]] = {}  # Maps struct name to layout dictionary.
         self.field_symbols: Dict[str, Dict[int, str]] = {}  # Maps "struct_name.field_name" to symbolic values.
 
-    def update_definitions(self, defs: Dict[str, Any]) -> None:
-        """Update the parser with additional preprocessor definitions."""
+    def update_definitions(self, defs: Dict[str, Any]) -> Dict[str, Any]:
+        """Update the parser with additional preprocessor definitions and return all definitions."""
         self.preproc_defs.update(defs)
+        return self.preproc_defs
 
     def _preprocess_definition(self, definition: str) -> str:
         """Remove comments and substitute preprocessor constants.
@@ -192,7 +193,7 @@ class StructParser:
                     field_info["total_bits"] = field_sizes[name] * field_array_lengths[name]
                 else:
                     field_info["size"] = field_sizes[name]
-            # If the overall structure has 64 bits or fewer, add a mask for every field.
+            # If the overall structure is 64 bits or less, add a mask for every field.
             if layout["total_bits"] <= 64:
                 field_info["mask"] = hex(bit_masks[name])
             fields.append(field_info)
@@ -202,19 +203,19 @@ class StructParser:
         layout["fields_by_name"] = fields_by_name
         return layout
 
-    def parse_struct(self, struct_definition: str) -> Dict[str, Any]:
+    def parse_struct(self, struct_definition: str) -> str:
         """
         Parse a C struct definition string.
         The definition may reference preprocessor constants and nested struct types that must have been
         previously defined in this parser.
-        Returns a dictionary describing the layout and registers the struct in the instance registry.
+        Registers the struct in the instance registry and returns the struct name.
         """
         processed = self._preprocess_definition(struct_definition)
         layout = self._parse_struct(processed)
         # Register by typedef name.
         struct_name = layout["struct_name"]
         self.struct_registry[struct_name] = layout
-        return layout
+        return struct_name
 
     def to_json(self, struct_name: str) -> str:
         """
@@ -232,9 +233,12 @@ class StructParser:
         self.struct_registry[layout["struct_name"]] = layout
 
     def associate_field_symbols(self, struct_name: str, field_name: str, symbols: Dict[int, str]) -> None:
-        """Associate a field with symbolic values."""
+        """Associate a field with symbolic values and add to definitions if not already present."""
         key = f"{struct_name}.{field_name}"
         self.field_symbols[key] = symbols
+        for value, symbol in symbols.items():
+            if symbol not in self.preproc_defs:
+                self.preproc_defs[symbol] = value
 
     def get_symbol(self, struct_name: str, field_name: str, value: int) -> str:
         """Return the symbolic name for a given field value."""
@@ -281,9 +285,9 @@ if __name__ == "__main__":
         char values[5];
     } my_t;
     """
-    layout1 = parser.parse_struct(my_struct)
-    print("Test 1 - Layout for my_t:")
-    print(parser.to_json("my_t"))
+    struct_name1 = parser.parse_struct(my_struct)
+    print(f"Test 1 - Struct '{struct_name1}' successfully parsed and registered.")
+    print(parser.to_json(struct_name1))
     # Expect: bit-fields for item_1, item_2, item_3 with masks; values field with array_length 5.
     # Since total_bits is 64 or less, all fields will have a mask.
 
@@ -302,11 +306,12 @@ if __name__ == "__main__":
         print("\nTest 2 - Caught exception for undefined constants (expected):", e)
 
     # Now update definitions so that ITEM_3_BITS and MAX_BUFFER_LEN are defined.
-    parser.update_definitions({"ITEM_3_BITS": 16, "MAX_BUFFER_LEN": 5})
+    updated_defs = parser.update_definitions({"ITEM_3_BITS": 16, "MAX_BUFFER_LEN": 5})
+    print("Updated definitions:", updated_defs)
     try:
-        layout2 = parser.parse_struct(my_struct_bad)
-        print("\nTest 2 - Layout for my_t_bad after updating definitions:")
-        print(parser.to_json("my_t_bad"))
+        struct_name2 = parser.parse_struct(my_struct_bad)
+        print(f"\nTest 2 - Struct '{struct_name2}' successfully parsed and registered after updating definitions.")
+        print(parser.to_json(struct_name2))
     except StructParserError as e:
         print("Test 2 - Unexpected exception:", e)
 
@@ -331,9 +336,9 @@ if __name__ == "__main__":
     """
     parser.parse_struct(my_inner)
     # Parse outer struct again; should now succeed.
-    layout3 = parser.parse_struct(my_outer)
-    print("\nTest 3 - Layout for my_outer_t after defining my_inner_t:")
-    print(parser.to_json("my_outer_t"))
+    struct_name3 = parser.parse_struct(my_outer)
+    print(f"\nTest 3 - Struct '{struct_name3}' successfully parsed and registered after defining my_inner_t.")
+    print(parser.to_json(struct_name3))
 
     # Test 4: Nested struct array.
     my_nested_array = """
@@ -349,9 +354,9 @@ if __name__ == "__main__":
         int z;
     } my_outer2_t;
     """
-    layout4 = parser.parse_struct(my_outer2)
-    print("\nTest 4 - Layout for my_outer2_t (nested struct array):")
-    print(parser.to_json("my_outer2_t"))
+    struct_name4 = parser.parse_struct(my_outer2)
+    print(f"\nTest 4 - Struct '{struct_name4}' successfully parsed and registered (nested struct array).")
+    print(parser.to_json(struct_name4))
 
     # Test 5: Field symbol association and lookup.
     my_struct_with_symbols = """
@@ -360,28 +365,28 @@ if __name__ == "__main__":
         int error_code;
     } my_symbolic_t;
     """
-    parser.parse_struct(my_struct_with_symbols)
-    parser.associate_field_symbols("my_symbolic_t", "status", {
+    struct_name5 = parser.parse_struct(my_struct_with_symbols)
+    parser.associate_field_symbols(struct_name5, "status", {
         0: "OK",
         1: "WARNING",
         2: "ERROR"
     })
     try:
-        symbol = parser.get_symbol("my_symbolic_t", "status", 1)
-        print("\nTest 5 - Symbolic name for 'status' with value 1:", symbol)
+        symbol = parser.get_symbol(struct_name5, "status", 1)
+        print(f"\nTest 5 - Symbolic name for 'status' with value 1: {symbol}")
     except StructParserError as e:
         print("Test 5 - Unexpected exception:", e)
 
     # Test 6: Field lookup by name.
     try:
-        status_field = parser.get_field("my_symbolic_t", "status")
-        print("\nTest 6 - Field 'status' in 'my_symbolic_t':", status_field)
+        status_field = parser.get_field(struct_name5, "status")
+        print(f"\nTest 6 - Field 'status' in '{struct_name5}':", status_field)
     except StructParserError as e:
         print("Test 6 - Unexpected exception:", e)
 
     # Test 7: Field lookup by path.
     try:
-        status_field_by_path = parser.get_field_by_path("my_symbolic_t.status")
-        print("\nTest 7 - Field 'status' by path in 'my_symbolic_t':", status_field_by_path)
+        status_field_by_path = parser.get_field_by_path(f"{struct_name5}.status")
+        print(f"\nTest 7 - Field 'status' by path in '{struct_name5}':", status_field_by_path)
     except StructParserError as e:
         print("Test 7 - Unexpected exception:", e)
