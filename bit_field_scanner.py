@@ -84,7 +84,7 @@ class StructParser:
           - A list of field descriptions.
             * For bit-fields: name, type, bit_offset, bit_width, mask.
             * For primitive fields: name, type, bit_offset, size (or element_size and total_bits if array).
-            * For nested struct fields: includes the nested layout.
+            * For nested struct fields: includes the nested layout or a placeholder if undefined.
         """
         layout: Dict[str, Any] = {}
         bit_masks: Dict[str, int] = {}      # Computed mask for each field.
@@ -142,26 +142,32 @@ class StructParser:
                 bit_masks[name] = ((1 << total_field_bits) - 1) << total_bits
                 total_bits += total_field_bits
             else:
-                # Must be a primitive type.
+                # Must be a primitive type or an undefined nested struct.
                 if dtype not in TYPE_SIZES:
-                    raise StructParserError(f"Unknown type '{dtype}' in field '{name}'.")
-                base_size = TYPE_SIZES[dtype]
-                if array_part:
-                    array_length = int(array_part.strip("[]").strip())
-                    field_array_lengths[name] = array_length
-                    total_field_bits = base_size * array_length
+                    # Placeholder for undefined nested struct.
+                    nested_structs[name] = {"struct_name": dtype, "undefined": True}
+                    field_types[name] = dtype
+                    field_sizes[name] = 0  # Placeholder size.
+                    bit_shifts[name] = total_bits
+                    bit_masks[name] = 0
                 else:
-                    field_array_lengths[name] = None
-                    total_field_bits = base_size
-                # Align total_bits to base_size.
-                if total_bits % base_size != 0:
-                    padding = base_size - (total_bits % base_size)
-                    total_bits += padding
-                field_types[name] = dtype
-                field_sizes[name] = base_size
-                bit_shifts[name] = total_bits
-                bit_masks[name] = ((1 << total_field_bits) - 1) << total_bits
-                total_bits += total_field_bits
+                    base_size = TYPE_SIZES[dtype]
+                    if array_part:
+                        array_length = int(array_part.strip("[]").strip())
+                        field_array_lengths[name] = array_length
+                        total_field_bits = base_size * array_length
+                    else:
+                        field_array_lengths[name] = None
+                        total_field_bits = base_size
+                    # Align total_bits to base_size.
+                    if total_bits % base_size != 0:
+                        padding = base_size - (total_bits % base_size)
+                        total_bits += padding
+                    field_types[name] = dtype
+                    field_sizes[name] = base_size
+                    bit_shifts[name] = total_bits
+                    bit_masks[name] = ((1 << total_field_bits) - 1) << total_bits
+                    total_bits += total_field_bits
 
         layout["struct_name"] = self._extract_struct_name(definition)
         layout["endianness"] = self.endianness
@@ -322,10 +328,8 @@ if __name__ == "__main__":
         my_inner_t item_2;
     } my_outer_t;
     """
-    try:
-        parser.parse_struct(my_outer)
-    except StructParserError as e:
-        print("\nTest 3 - Caught exception for undefined nested struct (expected):", e)
+    struct_name3 = parser.parse_struct(my_outer)
+    print(f"\nTest 3 - Struct '{struct_name3}' successfully parsed and registered (with undefined nested struct).")
 
     # Now define the nested struct.
     my_inner = """
