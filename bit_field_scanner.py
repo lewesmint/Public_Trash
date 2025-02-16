@@ -92,7 +92,7 @@ class StructParser:
         field_types: Dict[str, str] = {}    # Field types as declared.
         field_sizes: Dict[str, int] = {}    # For bit-fields: width; for primitives: per-element size.
         field_array_lengths: Dict[str, Optional[int]] = {}  # None if not an array.
-        nested_structs: Dict[str, Dict[str, Any]] = {}        # For nested struct fields.
+        nested_structs: Dict[str, Dict[str, Any]] = {}      # For nested struct fields.
         bitfield_names: set = set()         # Names of fields declared as bit-fields.
         total_bits: int = 0
 
@@ -148,6 +148,7 @@ class StructParser:
                     nested_structs[name] = {"struct_name": dtype, "undefined": True}
                     field_types[name] = dtype
                     field_sizes[name] = 0  # Placeholder size.
+                    field_array_lengths[name] = None  # Placeholder array length.
                     bit_shifts[name] = total_bits
                     bit_masks[name] = 0
                 else:
