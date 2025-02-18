@@ -1,0 +1,4 @@
+    // Debugging prints
+    printf("rawtime: %lld\n", (long long)rawtime);
+    printf("elapsed_ticks: %lld\n", (long long)elapsed_ticks);
+    printf("elapsed_seconds: %lld\n", (long long)elapsed_seconds);
