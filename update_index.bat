@@ -14,13 +14,13 @@ if not exist "%input_file%" (
 (
     for /f "tokens=1,* delims=:" %%A in ('findstr /n "^" "%input_file%"') do (
         set "line=%%B"
-        rem Print debugging info to the screen only
+        :: Debug output to stderr so it doesn't get written into the temp file
         echo [DEBUG] Processing: "!line!" >&2
 
         if "!line!"=="" (
             call :PrintLine ""
         ) else (
-            rem Check if the line exactly matches "#define BUILD_INDEX <number>"
+            :: Check if the line exactly matches "#define BUILD_INDEX <number>"
             echo(!line!) | findstr /r "^#define BUILD_INDEX [0-9][0-9]*$" >nul
             if not errorlevel 1 (
                 for /f "tokens=3" %%C in ("!line!") do set /a new_index=%%C + 1
@@ -34,7 +34,7 @@ if not exist "%input_file%" (
 ) > "%temp_file%"
 
 if "%found%"=="1" (
-    move /y "%temp_file%" "%input_file%" > nul
+    move /y "%temp_file%" "%input_file%" >nul
     echo [+] BUILD_INDEX incremented successfully.
     exit /b 0
 ) else (
@@ -42,11 +42,15 @@ if "%found%"=="1" (
     echo [WARNING] No "#define BUILD_INDEX X" found in "%input_file%". >&2
     exit /b 2
 )
-
 goto :EOF
 
 :PrintLine
 rem This subroutine prints its argument exactly using echo(,
-rem which avoids interpreting drive letters or special characters.
-echo(%~1
+rem which avoids misinterpretation of text (e.g. drive letters).
+set "lineOut=%~1"
+if "%lineOut%"=="" (
+    echo.
+) else (
+    echo(%lineOut%
+)
 goto :EOF
