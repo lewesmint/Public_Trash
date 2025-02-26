@@ -13,24 +13,20 @@ if not exist "%input_file%" (
 
 :: Process the file line by line and write to a temp file
 (
-    for /f "tokens=1,* delims=:" %%A in ('findstr /n "^" "%input_file%"') do (
-        set "line=%%B"
+    for /f "delims=" %%A in ('type "%input_file%"') do (
+        set "line=%%A"
 
         :: DEBUGGING - Print to SCREEN ONLY, not to the file
         echo [DEBUG] Processing: "!line!" >&2
 
-        :: Preserve blank lines
-        if "!line!"=="" (
-            echo.
+        :: Check for "#define BUILD_INDEX X"
+        echo "!line!" | findstr /r "^#define BUILD_INDEX [0-9][0-9]*$" >nul
+        if not errorlevel 1 (
+            for /f "tokens=3" %%B in ("!line!") do set /a new_index=%%B + 1
+            echo #define BUILD_INDEX !new_index!
+            set "found=1"
         ) else (
-            echo !line! | findstr /r "^#define BUILD_INDEX [0-9][0-9]*$" >nul
-            if not errorlevel 1 (
-                for /f "tokens=3" %%C in ("!line!") do set /a new_index=%%C + 1
-                echo #define BUILD_INDEX !new_index!
-                set "found=1"
-            ) else (
-                echo(!line!
-            )
+            echo !line!
         )
     )
 ) > "%temp_file%"
