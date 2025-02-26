@@ -14,13 +14,14 @@ if not exist "%input_file%" (
 (
     for /f "tokens=1,* delims=:" %%A in ('findstr /n "^" "%input_file%"') do (
         set "line=%%B"
-        :: Debug output to stderr so it doesn't get written into the temp file
+
+        :: Debug output to screen only (sent to stderr)
         echo [DEBUG] Processing: "!line!" >&2
 
+        :: Preserve blank lines exactly
         if "!line!"=="" (
             call :PrintLine ""
         ) else (
-            :: Check if the line exactly matches "#define BUILD_INDEX <number>"
             echo(!line!) | findstr /r "^#define BUILD_INDEX [0-9][0-9]*$" >nul
             if not errorlevel 1 (
                 for /f "tokens=3" %%C in ("!line!") do set /a new_index=%%C + 1
@@ -45,12 +46,6 @@ if "%found%"=="1" (
 goto :EOF
 
 :PrintLine
-rem This subroutine prints its argument exactly using echo(,
-rem which avoids misinterpretation of text (e.g. drive letters).
-set "lineOut=%~1"
-if "%lineOut%"=="" (
-    echo.
-) else (
-    echo(%lineOut%
-)
+rem This subroutine echoes its argument using echo( to avoid errors
+echo(%~1
 goto :EOF
