@@ -11,12 +11,15 @@ if not exist "%input_file%" (
     exit /b 1
 )
 
-:: Process the file line by line, preserving blank lines
+:: Process the file line by line
 (
     for /f "tokens=1,* delims=:" %%A in ('findstr /n "^" "%input_file%"') do (
         set "line=%%B"
-        
-        :: Preserve blank lines (empty %%B means it's a blank line)
+
+        :: Debugging: Print the line being processed
+        echo [DEBUG] Processing: !line!
+
+        :: Preserve blank lines
         if "!line!"=="" (
             echo.
         ) else (
@@ -26,7 +29,11 @@ if not exist "%input_file%" (
                 echo #define BUILD_INDEX !new_index!
                 set "found=1"
             ) else (
-                echo !line!
+                :: Debugging: Catch problematic lines
+                >> "%temp_file%" echo(!line!
+                if errorlevel 1 (
+                    echo [ERROR] Issue occurred while processing: !line!
+                )
             )
         )
     )
