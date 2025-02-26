@@ -11,13 +11,13 @@ if not exist "%input_file%" (
     exit /b 1
 )
 
-:: Process the file line by line
+:: Process the file line by line and write to a temp file
 (
     for /f "tokens=1,* delims=:" %%A in ('findstr /n "^" "%input_file%"') do (
         set "line=%%B"
 
-        :: Debugging: Print the line being processed
-        echo [DEBUG] Processing: !line!
+        :: Debugging: Print each line before processing
+        echo [DEBUG] Processing: "!line!"
 
         :: Preserve blank lines
         if "!line!"=="" (
@@ -29,11 +29,7 @@ if not exist "%input_file%" (
                 echo #define BUILD_INDEX !new_index!
                 set "found=1"
             ) else (
-                :: Debugging: Catch problematic lines
                 >> "%temp_file%" echo(!line!
-                if errorlevel 1 (
-                    echo [ERROR] Issue occurred while processing: !line!
-                )
             )
         )
     )
@@ -43,9 +39,9 @@ if not exist "%input_file%" (
 if "%found%"=="1" (
     move /y "%temp_file%" "%input_file%" > nul
     echo [+] BUILD_INDEX incremented successfully.
+    exit /b 0
 ) else (
     del "%temp_file%"
     echo [!] Warning: No "#define BUILD_INDEX X" found in "%input_file%".
+    exit /b 2
 )
-
-exit /b
