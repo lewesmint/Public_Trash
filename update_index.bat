@@ -1,13 +1,13 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set "input_file=build_version.h"
+set "input_file=include\AppSettings.h"
 set "temp_file=%input_file%.tmp"
 set "found=0"
 
 :: Check if the file exists
 if not exist "%input_file%" (
-    echo [!] Error: File "%input_file%" not found.
+    echo [ERROR] File "%input_file%" not found. >&2
     exit /b 1
 )
 
@@ -16,8 +16,8 @@ if not exist "%input_file%" (
     for /f "tokens=1,* delims=:" %%A in ('findstr /n "^" "%input_file%"') do (
         set "line=%%B"
 
-        :: Debugging: Print each line before processing
-        echo [DEBUG] Processing: "!line!"
+        :: DEBUGGING - Print to SCREEN ONLY, not to the file
+        echo [DEBUG] Processing: "!line!" >&2
 
         :: Preserve blank lines
         if "!line!"=="" (
@@ -29,7 +29,7 @@ if not exist "%input_file%" (
                 echo #define BUILD_INDEX !new_index!
                 set "found=1"
             ) else (
-                >> "%temp_file%" echo(!line!
+                echo(!line!
             )
         )
     )
@@ -42,6 +42,6 @@ if "%found%"=="1" (
     exit /b 0
 ) else (
     del "%temp_file%"
-    echo [!] Warning: No "#define BUILD_INDEX X" found in "%input_file%".
+    echo [WARNING] No "#define BUILD_INDEX X" found in "%input_file%". >&2
     exit /b 2
 )
