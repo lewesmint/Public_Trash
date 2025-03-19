@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Understanding Byte Order in C Structs</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            color: #333;
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #3498db;
+            margin-top: 30px;
+        }
+        pre {
+            background-color: #f8f8f8;
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        .memory-diagram {
+            font-family: 'Courier New', Courier, monospace;
+            border-collapse: collapse;
+            margin: 20px 0;
+            width: 100%;
+        }
+        .memory-diagram th, .memory-diagram td {
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: center;
+        }
+        .memory-diagram th {
+            background-color: #f2f2f2;
+        }
+        .highlight {
+            background-color: #ffffcc;
+        }
+        .note {
+            background-color: #e8f4f8;
+            padding: 15px;
+            border-left: 5px solid #3498db;
+            margin: 20px 0;
+        }
+        .diagram-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 30px 0;
+        }
+        .arrow-down {
+            margin: 10px 0;
+            font-size: 24px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Understanding Byte Order in C Structs</h1>
+    
+    <p>This explainer clarifies why the bytes for a 16-bit value appear where they do in our program's output. Let's examine our original code:</p>
+    
+    <pre>
+#include &lt;stdio.h&gt;
+#include &lt;arpa/inet.h&gt;
+
+struct BitFields {
+    unsigned char msg_type     :  4;   
+    unsigned char msg_source   :  4;  
+    unsigned char counter;     // 8 bits   
+    unsigned short length;     // 16 bits
+} __attribute__((packed));
+
+int main() {
+    struct BitFields bf;  
+    
+    bf.msg_type   = 0x03;   // 0011
+    bf.msg_source = 0x06;   // 0110
+    bf.counter    = 0x78;   // 01111000
+    bf.length     = 43981;  // 0xABCD = 1010101111001101
+    
+    union {
+        struct BitFields bf;
+        uint32_t value;
+    } converter;
+
+    converter.bf = bf;
+    printf("Value: 0x%08X\n", converter.value);
+    
+    return 0;
+}
+    </pre>
+    
+    <h2>The Output</h2>
+    <pre>Value: 0xABCD7863</pre>
+    
+    <div class="note">
+        <p>The question: Why do the bytes for the 16-bit <code>length</code> value (0xABCD) appear as they do in the output?</p>
+    </div>
+
+    <h2>Two Key Concepts</h2>
+    
+    <h3>1. Endianness</h3>
+    <p>Most modern computers use <strong>little-endian</strong> byte order, which means that when multi-byte values are stored in memory, the least significant byte comes first (at the lowest memory address).</p>
+    
+    <h3>2. Memory Layout vs. Display Format</h3>
+    <p>There's a difference between how data is physically stored in memory and how we display that data when we print it as hexadecimal.</p>
+    
+    <h2>Step-by-Step Explanation</h2>
+    
+    <h3>1. Our Initial Values</h3>
+    <div class="memory-diagram">
+        <table>
+            <tr>
+                <th>Field</th>
+                <th>Value (Decimal)</th>
+                <th>Value (Hex)</th>
+                <th>Value (Binary)</th>
+                <th>Size</th>
+            </tr>
+            <tr>
+                <td>msg_type</td>
+                <td>3</td>
+                <td>0x03</td>
+                <td>0011</td>
+                <td>4 bits</td>
+            </tr>
+            <tr>
+                <td>msg_source</td>
+                <td>6</td>
+                <td>0x06</td>
+                <td>0110</td>
+                <td>4 bits</td>
+            </tr>
+            <tr>
+                <td>counter</td>
+                <td>120</td>
+                <td>0x78</td>
+                <td>01111000</td>
+                <td>8 bits</td>
+            </tr>
+            <tr class="highlight">
+                <td>length</td>
+                <td>43981</td>
+                <td>0xABCD</td>
+                <td>1010101111001101</td>
+                <td>16 bits</td>
+            </tr>
+        </table>
+    </div>
+    
+    <h3>2. How These Values Are Arranged in Memory</h3>
+    
+    <p>First, let's understand how these values are laid out in a byte-by-byte representation:</p>
+    
+    <div class="memory-diagram">
+        <table>
+            <tr>
+                <th>Byte 0</th>
+                <th>Byte 1</th>
+                <th>Byte 2</th>
+                <th>Byte 3</th>
+            </tr>
+            <tr>
+                <td>msg_type (4 bits) + msg_source (4 bits)</td>
+                <td>counter (8 bits)</td>
+                <td>length (lower 8 bits)</td>
+                <td>length (upper 8 bits)</td>
+            </tr>
+            <tr>
+                <td>0110 0011</td>
+                <td>0111 1000</td>
+                <td>1100 1101</td>
+                <td>1010 1011</td>
+            </tr>
+            <tr>
+                <td>0x63</td>
+                <td>0x78</td>
+                <td>0xCD</td>
+                <td>0xAB</td>
+            </tr>
+        </table>
+    </div>
+    
+    <div class="note">
+        <p><strong>Important:</strong> Notice that for the 16-bit <code>length</code> value (0xABCD), the bytes are stored in little-endian order (CD, then AB).</p>
+    </div>
+    
+    <h3>3. Memory Layout vs. Display Format</h3>
+    
+    <div class="diagram-container">
+        <div>
+            <h4>Memory Layout (Little-Endian, low address to high)</h4>
+            <div class="memory-diagram">
+                <table>
+                    <tr>
+                        <th>Address n</th>
+                        <th>Address n+1</th>
+                        <th>Address n+2</th>
+                        <th>Address n+3</th>
+                    </tr>
+                    <tr>
+                        <td>0x63</td>
+                        <td>0x78</td>
+                        <td>0xCD</td>
+                        <td>0xAB</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+        
+        <div class="arrow-down">↓</div>
+        
+        <div>
+            <h4>When Read as a 32-bit Integer (uint32_t)</h4>
+            <div class="memory-diagram">
+                <table>
+                    <tr>
+                        <td>0xABCD7863</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <h2>Why the Bytes Appear in This Order</h2>
+    
+    <p>The reason our output is <code>0xABCD7863</code> can be broken down into two parts:</p>
+    
+    <ol>
+        <li><strong>Little-Endian Storage:</strong> In memory, the 16-bit value <code>0xABCD</code> is stored as two bytes: <code>0xCD</code> followed by <code>0xAB</code> (least significant byte first).</li>
+        <li><strong>Display Format:</strong> When we print the entire 32-bit value using <code>printf("Value: 0x%08X\n", converter.value);</code>, we're displaying it in the standard hexadecimal format (most significant digit first). So the 32-bit value in memory (0x63, 0x78, 0xCD, 0xAB) is interpreted correctly as <code>0xABCD7863</code>.</li>
+    </ol>
+    
+    <div class="note">
+        <p><strong>Key insight:</strong> The apparent "non-reversal" of bytes in the output is because we're viewing the entire 32-bit value in standard hexadecimal notation, which displays the most significant byte first. The bytes themselves ARE stored in little-endian order in memory.</p>
+    </div>
+    
+    <h2>Conclusion</h2>
+    
+    <p>When working with C structs and memory:</p>
+    
+    <ul>
+        <li>Individual multi-byte fields (like our 16-bit <code>length</code>) are stored in little-endian order in memory on most systems.</li>
+        <li>When we view the entire struct as a 32-bit integer, the bytes are interpreted correctly based on their position in memory.</li>
+        <li>The resulting hexadecimal display shows the value as it would be written on paper (most significant digit first), regardless of how it's stored in memory.</li>
+    </ul>
+    
+    <p>This is why our 16-bit value <code>0xABCD</code> appears as the prefix in our output <code>0xABCD7863</code>, despite being stored in reverse byte order in memory.</p>
+</body>
+</html>
