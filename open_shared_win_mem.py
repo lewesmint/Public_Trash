@@ -2,6 +2,50 @@ import mmap
 import os
 import time
 from ctypes import windll, c_void_p, sizeof, byref, create_string_buffer, WinError
+from ctypes import c_ulong, c_char_p, POINTER, Structure, c_bool, c_uint32, pointer, c_size_t
+
+# Add structure for memory basic information
+class MEMORY_BASIC_INFORMATION(Structure):
+    _fields_ = [
+        ("BaseAddress", c_void_p),
+        ("AllocationBase", c_void_p),
+        ("AllocationProtect", c_ulong),
+        ("RegionSize", c_size_t),
+        ("State", c_ulong),
+        ("Protect", c_ulong),
+        ("Type", c_ulong)
+    ]
+
+def get_memory_info(map_view):
+    """
+    Get information about the mapped memory region.
+    
+    Args:
+        map_view: Pointer to the mapped view of file
+        
+    Returns:
+        Dictionary with memory information
+    """
+    mbi = MEMORY_BASIC_INFORMATION()
+    result = windll.kernel32.VirtualQuery(
+        map_view,
+        byref(mbi),
+        sizeof(MEMORY_BASIC_INFORMATION)
+    )
+    
+    if result == 0:
+        error_code = windll.kernel32.GetLastError()
+        print(f"Failed to query memory information: {WinError(error_code)}")
+        return None
+    
+    return {
+        "base_address": mbi.BaseAddress,
+        "region_size": mbi.RegionSize,
+        "allocation_protect": mbi.AllocationProtect,
+        "state": mbi.State,
+        "protect": mbi.Protect,
+        "type": mbi.Type
+    }
 
 def open_shared_memory(name="ABC", size=4096):
     """
@@ -31,6 +75,11 @@ def open_shared_memory(name="ABC", size=4096):
         print(f"Failed to open shared memory '{name}': {WinError(error_code)}")
         return None
     
+    # Get security information if needed
+    # security_info = get_security_info(handle)
+    # if security_info:
+    #     print(f"Security descriptor (SDDL): {security_info['sddl']}")
+    
     # Map view of the file
     map_view = windll.kernel32.MapViewOfFile(
         handle,                          # Handle to mapping object
@@ -45,6 +94,12 @@ def open_shared_memory(name="ABC", size=4096):
         print(f"Failed to map view of file: {WinError(error_code)}")
         windll.kernel32.CloseHandle(handle)
         return None
+    
+    # Get memory information
+    memory_info = get_memory_info(map_view)
+    if memory_info:
+        print(f"Shared memory size: {memory_info['region_size']} bytes")
+        print(f"Protection: 0x{memory_info['protect']:X}")
     
     # Create a memory map from the pointer
     try:
