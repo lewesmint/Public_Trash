@@ -1,0 +1,2 @@
+curl -o C:\Temp\open-vm-tools.deb http://archive.ubuntu.com/ubuntu/pool/main/o/open-vm-tools/open-vm-tools_12.2.0-1~ubuntu0.24.04.2_amd64.deb
+curl -o C:\Temp\open-vm-tools-desktop.deb http://archive.ubuntu.com/ubuntu/pool/main/o/open-vm-tools/open-vm-tools-desktop_12.2.0-1~ubuntu0.24.04.2_amd64.deb
