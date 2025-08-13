@@ -1,13 +1,13 @@
 [Unit]
-Description=Mount VMware Shared Folders (vmhgfs-fuse)
+Description=Mount VMware Shared Folders via vmhgfs-fuse
 After=vmtoolsd.service
 Requires=vmtoolsd.service
 
-[Mount]
-What=.host:/
-Where=/mnt/hgfs
-Type=fuse.vmhgfs-fuse
-Options=allow_other
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/vmhgfs-fuse .host:/ /mnt/hgfs -o allow_other
+ExecStop=/bin/umount /mnt/hgfs
 
 [Install]
 WantedBy=multi-user.target
