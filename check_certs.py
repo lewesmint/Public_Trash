@@ -252,10 +252,23 @@ def render_group_box(c: CertInfo) -> str:
     lines: List[str] = []
     lines.append(f"SHA256: {c.fingerprint_sha256}")
     lines.append(f"Serial: {c.serial_hex}")
-    lines.append(
+    
+    # Check if certificate is expired
+    now = datetime.now()
+    is_expired = c.not_after < now
+    
+    validity_line = (
         "Validity: "
         f"{c.not_before.isoformat()} to {c.not_after.isoformat()}"
     )
+    
+    if is_expired:
+        validity_line += " *** EXPIRED ***"
+        lines.append(validity_line)
+        lines.append("⚠️  WARNING: This certificate has EXPIRED!")
+    else:
+        lines.append(validity_line)
+    
     lines.append(f"Issuer CN: {c.issuer_cn or '(unknown)'}")
     lines.append(f"Subject: {human_identity_line(c)}")
     lines.append("Found in:")
