@@ -234,18 +234,28 @@ def merge_by_fingerprint(certs: Iterable[CertInfo]) -> Dict[str, CertInfo]:
 
 
 def human_identity_line(c: CertInfo) -> str:
-    bits = []
+    # Build the main subject identity
+    subject_parts = []
     if c.subject_cn:
-        bits.append(f"CN={c.subject_cn}")
+        subject_parts.append(f"CN={c.subject_cn}")
     if c.subject_org:
-        bits.append(f"O={c.subject_org}")
+        subject_parts.append(f"O={c.subject_org}")
     if c.subject_ou:
-        bits.append(f"OU={c.subject_ou}")
+        subject_parts.append(f"OU={c.subject_ou}")
+    
+    subject_line = ", ".join(subject_parts) if subject_parts else "(no subject identity)"
+    
+    # Add additional identities
+    additional = []
     if c.emails:
-        bits.append("Emails=" + ", ".join(c.emails))
+        additional.append("Emails=" + ", ".join(c.emails))
     if c.sans_dns:
-        bits.append("DNS=" + ", ".join(c.sans_dns))
-    return ", ".join(bits) if bits else "(no subject identity fields)"
+        additional.append("DNS=" + ", ".join(c.sans_dns))
+    
+    if additional:
+        return f"{subject_line} | {' | '.join(additional)}"
+    else:
+        return subject_line
 
 
 def render_group_box(c: CertInfo) -> str:
@@ -340,6 +350,7 @@ def main() -> None:
     parser.add_argument(
         "--show-unique",
         action="store_true",
+        default=True,
         help="Also print ASCII boxes for unique certificates.",
     )
     parser.add_argument(
