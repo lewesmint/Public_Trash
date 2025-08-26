@@ -1,0 +1,55 @@
+version: '3'
+
+tasks:
+  setup:task-completion:
+    desc: "Install Task bash completion and tell you how to enable it now"
+    silent: true
+    cmds:
+      - bash -eu -o pipefail -c '
+          INSTALL="$HOME/.task_completion.sh"
+          RCFILE="$HOME/.bashrc"
+          SOURCE_LINE="source ~/.task_completion.sh"
+
+          up_to_date() {
+            [ -f "$INSTALL" ] && cmp -s <(task --completion bash) "$INSTALL"
+          }
+
+          if up_to_date; then
+            echo "Completion script is already up to date at $INSTALL"
+          else
+            TMPFILE="$(mktemp "${TMPDIR:-/tmp}/task_completion.XXXXXX")"
+            task --completion bash > "$TMPFILE"
+            mv "$TMPFILE" "$INSTALL"
+            echo "Installed or updated completion at $INSTALL"
+          fi
+
+          if ! grep -Fxq "$SOURCE_LINE" "$RCFILE"; then
+            printf "\\n%s\\n" "$SOURCE_LINE" >> "$RCFILE"
+            echo "Added source line to $RCFILE"
+          else
+            echo "Source line already present in $RCFILE"
+          fi
+
+          # Friendly prompt with the exact command to copy
+          if [ -n "${BASH_VERSION-}" ]; then
+            NOW_CMD="source ~/.bashrc"
+          elif [ -n "${ZSH_VERSION-}" ]; then
+            NOW_CMD="source ~/.zshrc"
+          else
+            NOW_CMD="source ~/.bashrc"
+          fi
+
+          echo
+          echo "Next step:"
+          echo "  Open a new terminal, or run this to enable completion now:"
+          echo "    $NOW_CMD"
+          echo
+        '
+    preconditions:
+      - sh: command -v task >/dev/null 2>&1
+        msg: "The 'task' command is not installed or not on PATH."
+
+  default:
+    desc: "Show all tasks"
+    cmds:
+      - task --list-all
