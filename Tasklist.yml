@@ -1,7 +1,7 @@
 version: '3'
 
 tasks:
-  setup:task-completion:
+  "setup:task-completion":
     desc: "Install Task bash completion and tell you how to enable it now"
     silent: true
     cmds:
@@ -30,7 +30,6 @@ tasks:
             echo "Source line already present in $RCFILE"
           fi
 
-          # Friendly prompt with the exact command to copy
           if [ -n "${BASH_VERSION-}" ]; then
             NOW_CMD="source ~/.bashrc"
           elif [ -n "${ZSH_VERSION-}" ]; then
