@@ -1,95 +1,384 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env python3
+"""
+Scan a folder for X.509 certificates, detect duplicates, and report them
+with ASCII-box summaries.
 
-ROOT="/usr/local/share/ca-certificates"
+Supports:
+- PEM files (multiple "BEGIN CERTIFICATE" blocks per file)
+- Bare DER files (.der, .cer, .crt without PEM headers)
 
-# Find all .crt files recursively
-mapfile -d '' FILES < <(find "$ROOT" -type f -name '*.crt' -print0 2>/dev/null || true)
+Duplicates are grouped by SHA-256 fingerprint across all files.
 
-if [ ${#FILES[@]} -eq 0 ]; then
-  echo "No .crt files found under $ROOT"
-  exit 0
-fi
+Usage:
+    python cert_dupe_report.py /path/to/folder
+"""
 
-now_epoch=$(date +%s)
+from __future__ import annotations
 
-# Storage
-# Key = "SUBJECT||ISSUER"  Value = "end_epoch|path"
-declare -A newest_valid_by_pair
-declare -A newest_any_by_pair
-declare -A expired_list
+import argparse
+import base64
+import binascii
+import re
+import sys
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Tuple
 
-canon() {
-  # Canonicalise whitespace
-  sed -E 's/[[:space:]]+/ /g' | sed -E 's/^ //; s/ $//'
-}
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
+from cryptography.x509.oid import ExtensionOID, NameOID
 
-for f in "${FILES[@]}"; do
-  # Skip non-PEM or unreadable files gracefully
-  if ! subj=$(openssl x509 -in "$f" -noout -subject 2>/dev/null); then continue; fi
-  if ! issr=$(openssl x509 -in "$f" -noout -issuer  2>/dev/null);  then continue; fi
-  if ! endd=$(openssl x509 -in "$f" -noout -enddate 2>/dev/null);  then continue; fi
 
-  subj_val=$(echo "${subj#subject=}" | canon)
-  issr_val=$(echo "${issr#issuer=}"  | canon)
-  end_human=${endd#notAfter=}
-  end_epoch=$(date -d "$end_human" +%s 2>/dev/null || echo 0)
+PEM_BLOCK_RE = re.compile(
+    r"-----BEGIN CERTIFICATE-----\s+?(.+?)\s+?-----END CERTIFICATE-----",
+    re.DOTALL,
+)
 
-  key="$subj_val||$issr_val"
 
-  # Track newest any
-  prev_any="${newest_any_by_pair[$key]:-}"
-  if [ -z "$prev_any" ] || [ "$end_epoch" -gt "${prev_any%%|*}" ]; then
-    newest_any_by_pair[$key]="$end_epoch|$f|$end_human"
-  fi
+@dataclass(frozen=True)
+class Location:
+    path: Path
+    index_in_file: int  # 1-based index of the cert within that file
 
-  # Track newest valid
-  if [ "$end_epoch" -gt "$now_epoch" ]; then
-    prev_val="${newest_valid_by_pair[$key]:-}"
-    if [ -z "$prev_val" ] || [ "$end_epoch" -gt "${prev_val%%|*}" ]; then
-      newest_valid_by_pair[$key]="$end_epoch|$f|$end_human"
-    fi
-  else
-    # Expired
-    expired_list["$f"]="$key|$end_epoch|$end_human|$subj_val|$issr_val"
-  fi
-done
 
-if [ ${#expired_list[@]} -eq 0 ]; then
-  echo "No expired certificates found under $ROOT"
-  exit 0
-fi
+@dataclass
+class CertInfo:
+    der_bytes: bytes
+    fingerprint_sha256: str
+    subject_cn: Optional[str]
+    subject_org: Optional[str]
+    subject_ou: Optional[str]
+    issuer_cn: Optional[str]
+    serial_hex: str
+    not_before: datetime
+    not_after: datetime
+    emails: List[str]
+    sans_dns: List[str]
+    locations: List[Location]
 
-echo "Expired certificates and possible replacements:"
-echo
 
-for f in "${!expired_list[@]}"; do
-  IFS='|' read -r key end_epoch end_human subj_val issr_val <<<"${expired_list[$f]}"
+def draw_box(lines: List[str], max_width: int = 100) -> str:
+    """
+    Create a simple ASCII box around the list of lines.
+    Lines are wrapped politely to max_width if needed.
+    """
+    wrapped: List[str] = []
+    for line in lines:
+        if len(line) <= max_width:
+            wrapped.append(line)
+            continue
+        # naive wrap on spaces
+        current = []
+        for word in line.split(" "):
+            if sum(len(w) for w in current) + len(current) + len(word) > max_width:
+                wrapped.append(" ".join(current))
+                current = [word]
+            else:
+                current.append(word)
+        if current:
+            wrapped.append(" ".join(current))
 
-  repl="${newest_valid_by_pair[$key]:-}"
-  newest_any="${newest_any_by_pair[$key]:-}"
+    width = min(
+        max((len(s) for s in wrapped), default=0),
+        max_width,
+    )
+    top = "+" + "-" * (width + 2) + "+"
+    body = "\n".join(f"| {s.ljust(width)} |" for s in wrapped)
+    bottom = "+" + "-" * (width + 2) + "+"
+    return f"{top}\n{body}\n{bottom}" if wrapped else f"{top}\n{bottom}"
 
-  echo "Expired: $f"
-  echo "  Subject: $subj_val"
-  echo "  Issuer : $issr_val"
-  echo "  Expired: $end_human"
 
-  if [ -n "$repl" ]; then
-    IFS='|' read -r rep_epoch rep_path rep_human <<<"$repl"
-    echo "  Superseded by (valid): $rep_path"
-    echo "    Expires: $rep_human"
-  else
-    if [ -n "$newest_any" ]; then
-      IFS='|' read -r any_epoch any_path any_human <<<"$newest_any"
-      if [ "$any_epoch" -gt "$end_epoch" ]; then
-        echo "  Note: A newer cert exists for the same Subject+Issuer but it is not currently valid."
-        echo "        Newest found: $any_path  (expires $any_human)"
-      else
-        echo "  No newer cert found for the same Subject+Issuer."
-      fi
-    else
-      echo "  No newer cert found for the same Subject+Issuer."
-    fi
-  fi
-  echo
-done
+def safe_get_attr(name: x509.Name, oid: x509.ObjectIdentifier) -> Optional[str]:
+    try:
+        attrs = name.get_attributes_for_oid(oid)
+        return attrs[0].value if attrs else None
+    except Exception:
+        return None
+
+
+def extract_san_emails_and_dns(
+    cert: x509.Certificate,
+) -> Tuple[List[str], List[str]]:
+    emails: List[str] = []
+    dns_names: List[str] = []
+    try:
+        san = cert.extensions.get_extension_for_oid(
+            ExtensionOID.SUBJECT_ALTERNATIVE_NAME
+        ).value
+        emails = san.get_values_for_type(x509.RFC822Name)
+        dns_names = san.get_values_for_type(x509.DNSName)
+    except x509.ExtensionNotFound:
+        pass
+    return emails, dns_names
+
+
+def load_der_candidates_from_pem_text(text: str) -> List[bytes]:
+    ders: List[bytes] = []
+    for idx, match in enumerate(PEM_BLOCK_RE.finditer(text), start=1):
+        b64 = match.group(1).strip()
+        try:
+            ders.append(base64.b64decode(b64))
+        except binascii.Error:
+            # Skip malformed block
+            continue
+    return ders
+
+
+def try_load_single_der(blob: bytes) -> Optional[bytes]:
+    """
+    Try to parse a single DER certificate from bytes.
+    Returns the same bytes if successfully parsed as DER, else None.
+    """
+    try:
+        x509.load_der_x509_certificate(blob)
+        return blob
+    except Exception:
+        return None
+
+
+def parse_cert_from_der(
+    der: bytes, loc: Location
+) -> Optional[CertInfo]:
+    try:
+        cert = x509.load_der_x509_certificate(der)
+    except Exception:
+        return None
+
+    fp = cert.fingerprint(hashes.SHA256()).hex().upper()
+    subj = cert.subject
+    issuer = cert.issuer
+
+    subject_cn = safe_get_attr(subj, NameOID.COMMON_NAME)
+    subject_org = safe_get_attr(subj, NameOID.ORGANIZATION_NAME)
+    subject_ou = safe_get_attr(subj, NameOID.ORGANIZATIONAL_UNIT_NAME)
+    issuer_cn = safe_get_attr(issuer, NameOID.COMMON_NAME)
+
+    emails, sans_dns = extract_san_emails_and_dns(cert)
+
+    info = CertInfo(
+        der_bytes=der,
+        fingerprint_sha256=fp,
+        subject_cn=subject_cn,
+        subject_org=subject_org,
+        subject_ou=subject_ou,
+        issuer_cn=issuer_cn,
+        serial_hex=format(cert.serial_number, "x").upper(),
+        not_before=cert.not_valid_before,
+        not_after=cert.not_valid_after,
+        emails=emails,
+        sans_dns=sans_dns,
+        locations=[loc],
+    )
+    return info
+
+
+def gather_cert_infos(root: Path) -> Tuple[List[CertInfo], Dict[Path, int]]:
+    """
+    Walk the tree from root, parse certificates from files.
+    Returns list of CertInfo and a per-file count of certs found.
+    """
+    certs: List[CertInfo] = []
+    per_file_count: Dict[Path, int] = {}
+
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+
+        # First, look for PEM blocks inside as text
+        ders: List[bytes] = []
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            text = ""
+
+        pem_ders = load_der_candidates_from_pem_text(text)
+        if pem_ders:
+            ders.extend(pem_ders)
+        else:
+            # If no PEM blocks, try entire file as DER
+            try:
+                blob = path.read_bytes()
+            except Exception:
+                continue
+            der_one = try_load_single_der(blob)
+            if der_one is not None:
+                ders.append(der_one)
+
+        if not ders:
+            continue
+
+        per_file_count[path] = len(ders)
+        for i, der in enumerate(ders, start=1):
+            loc = Location(path=path, index_in_file=i)
+            info = parse_cert_from_der(der, loc)
+            if info:
+                certs.append(info)
+
+    return certs, per_file_count
+
+
+def merge_by_fingerprint(certs: Iterable[CertInfo]) -> Dict[str, CertInfo]:
+    """
+    Merge CertInfo entries that share the same SHA-256 fingerprint.
+    Locations are concatenated.
+    """
+    merged: Dict[str, CertInfo] = {}
+    for c in certs:
+        key = c.fingerprint_sha256
+        if key not in merged:
+            merged[key] = c
+        else:
+            merged[key].locations.extend(c.locations)
+    return merged
+
+
+def human_identity_line(c: CertInfo) -> str:
+    # Build the main subject identity
+    subject_parts = []
+    if c.subject_cn:
+        subject_parts.append(f"CN={c.subject_cn}")
+    if c.subject_org:
+        subject_parts.append(f"O={c.subject_org}")
+    if c.subject_ou:
+        subject_parts.append(f"OU={c.subject_ou}")
+    
+    subject_line = ", ".join(subject_parts) if subject_parts else "(no subject identity)"
+    
+    # Add additional identities
+    additional = []
+    if c.emails:
+        additional.append("Emails=" + ", ".join(c.emails))
+    if c.sans_dns:
+        additional.append("DNS=" + ", ".join(c.sans_dns))
+    
+    if additional:
+        return f"{subject_line} | {' | '.join(additional)}"
+    else:
+        return subject_line
+
+
+def render_group_box(c: CertInfo) -> str:
+    lines: List[str] = []
+    lines.append(f"SHA256: {c.fingerprint_sha256}")
+    lines.append(f"Serial: {c.serial_hex}")
+    
+    # Check if certificate is expired
+    now = datetime.now()
+    is_expired = c.not_after < now
+    
+    validity_line = (
+        "Validity: "
+        f"{c.not_before.isoformat()} to {c.not_after.isoformat()}"
+    )
+    
+    if is_expired:
+        validity_line += " *** EXPIRED ***"
+        lines.append(validity_line)
+        lines.append("⚠️  WARNING: This certificate has EXPIRED!")
+    else:
+        lines.append(validity_line)
+    
+    lines.append(f"Issuer CN: {c.issuer_cn or '(unknown)'}")
+    lines.append(f"Subject: {human_identity_line(c)}")
+    lines.append("Found in:")
+    for loc in c.locations:
+        lines.append(f"  - {loc.path} [index {loc.index_in_file}]")
+    return draw_box(lines)
+
+
+def print_report(
+    merged: Dict[str, CertInfo],
+    per_file_count: Dict[Path, int],
+    show_unique: bool,
+    list_files_with_multiple: bool,
+) -> int:
+    total_certs = sum(per_file_count.values())
+    dupes = [c for c in merged.values() if len(c.locations) > 1]
+    uniques = [c for c in merged.values() if len(c.locations) == 1]
+
+    if dupes:
+        print("\n=== Duplicate certificates (by SHA-256) ===\n")
+        for c in sorted(
+            dupes,
+            key=lambda x: (len(x.locations), x.subject_cn or "", x.serial_hex),
+            reverse=True,
+        ):
+            print(render_group_box(c))
+            print()
+    else:
+        print("\nNo duplicates found.\n")
+
+    if show_unique and uniques:
+        print("=== Unique certificates ===\n")
+        for c in sorted(uniques, key=lambda x: x.subject_cn or x.serial_hex):
+            print(render_group_box(c))
+            print()
+
+    if list_files_with_multiple:
+        multi_files = {
+            p: n for p, n in per_file_count.items() if n > 1
+        }
+        if multi_files:
+            print("=== Files containing multiple certificates ===\n")
+            for p, n in sorted(multi_files.items()):
+                box = draw_box(
+                    [f"{p}", f"Certificates in file: {n}"],
+                )
+                print(box)
+                print()
+
+    print("=== Summary ===")
+    print(f"Files scanned: {len(per_file_count)}")
+    print(f"Certificates parsed: {total_certs}")
+    print(f"Unique fingerprints: {len(merged)}")
+    print(f"Duplicate groups: {len(dupes)}")
+
+    # Exit status: 0 if no dupes, 1 if dupes found
+    return 1 if dupes else 0
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Find duplicate X.509 certificates in a folder."
+    )
+    parser.add_argument(
+        "folder",
+        type=Path,
+        help="Root folder to scan recursively.",
+    )
+    parser.add_argument(
+        "--show-unique",
+        action="store_true",
+        default=True,
+        help="Also print ASCII boxes for unique certificates.",
+    )
+    parser.add_argument(
+        "--files-with-multiple",
+        action="store_true",
+        help="List files that contain more than one certificate.",
+    )
+    args = parser.parse_args()
+
+    root = args.folder
+    if not root.exists() or not root.is_dir():
+        print(f"Error: folder does not exist or is not a directory: {root}")
+        sys.exit(2)
+
+    certs, per_file_count = gather_cert_infos(root)
+    if not certs:
+        print("No certificates found.")
+        sys.exit(0)
+
+    merged = merge_by_fingerprint(certs)
+    exit_code = print_report(
+        merged=merged,
+        per_file_count=per_file_count,
+        show_unique=args.show_unique,
+        list_files_with_multiple=args.files_with_multiple,
+    )
+    sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()
