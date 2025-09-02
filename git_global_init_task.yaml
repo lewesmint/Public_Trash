@@ -1,0 +1,30 @@
+version: '3'
+
+tasks:
+  dev:03:git:init:global:
+    desc: Prompt for git username/email and configure globally
+    cmds:
+      - |
+        echo "Enter your Git username:"
+        read NAME
+        echo "Enter your Git email:"
+        read EMAIL
+
+        echo
+        echo "You entered:"
+        echo "  Name : $NAME"
+        echo "  Email: $EMAIL"
+        echo
+        read -p "Proceed with these values? (y/N): " CONFIRM
+
+        if [ "$CONFIRM" != "y" ] && [ "$CONFIRM" != "Y" ]; then
+          echo "Aborted."
+          exit 1
+        fi
+
+        git config --global user.name "$NAME"
+        git config --global user.email "$EMAIL"
+        git config --global init.defaultBranch main
+
+        echo "✅ Git configured globally with your details."
+    silent: true
