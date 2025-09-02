@@ -1,0 +1,21 @@
+version: '3'
+
+tasks:
+  dev:03:ssh:add-config:
+    desc: Append SSH config details
+    cmds:
+      - |
+        mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
+        touch ~/.ssh/config
+        chmod 600 ~/.ssh/config
+
+        cat >> ~/.ssh/config <<'EOF'
+
+        Host myserver
+          HostName example.com
+          User myuser
+          IdentityFile ~/.ssh/id_ed25519
+        EOF
+
+        echo "✅ SSH config updated (appended)."
