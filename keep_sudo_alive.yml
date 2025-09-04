@@ -1,0 +1,21 @@
+version: '3'
+sh: bash -lc
+
+tasks:
+  all:
+    desc: Run many tasks with a single sudo prompt
+    cmds:
+      - |
+        set -euo pipefail
+        # prompt once
+        sudo -v
+        # keep sudo fresh while children run
+        ( while true; do sudo -n true; sleep 60; done ) &
+        SUDO_KEEPALIVE_PID=$!
+        trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true; sudo -k' EXIT
+
+        # call subtasks; they can use sudo freely
+        task deps:packages
+        task vm:tools
+        task app:configure
+        task app:restart
