@@ -1,0 +1,66 @@
+# Taskfile.yml
+version: '3'
+sh: bash -c
+
+tasks:
+  jbang-jdk21-and-import-certs:
+    desc: Ensure JBang + JDK 21 + Quarkus CLI (if missing), load env, then import /etc/ssl/certs/*.pem into that JDK truststore
+    cmds:
+      - |
+        # --- Ensure JBang is installed (runs app setup if missing) ---
+        if [ ! -x "$HOME/.jbang/bin/jbang" ]; then
+          curl -Ls https://sh.jbang.dev | bash -s - -y
+        fi
+        # Make jbang usable in THIS shell immediately
+        export PATH="$HOME/.jbang/bin:$PATH"
+
+        # --- Ensure Quarkus CLI is present (skip if already on PATH) ---
+        if ! command -v quarkus >/dev/null 2>&1; then
+          # trust once (skip if already trusted)
+          jbang trust list | grep -q 'repo1.maven.org/maven2/io/quarkus/quarkus-cli' || \
+            jbang trust add https://repo1.maven.org/maven2/io/quarkus/quarkus-cli/
+          jbang app install quarkus@quarkusio
+        fi
+
+        # --- JDK 21 via JBang (idempotent if already installed) ---
+        jbang jdk install 21
+        jbang jdk default 21
+
+        # --- Load JDK 21 env for this shell ---
+        eval "$(jbang jdk java-env 21)"
+
+        # --- Pre-flight checks ---
+        command -v jbang    >/dev/null 2>&1 || { echo "ERROR: jbang not on PATH"; exit 1; }
+        command -v keytool  >/dev/null 2>&1 || { echo "ERROR: keytool not found after setting JDK env"; exit 1; }
+        test -r /etc/ssl/certs || { echo "ERROR: cannot read /etc/ssl/certs"; exit 1; }
+
+        KEYSTORE="$JAVA_HOME/lib/security/cacerts"
+        STOREPASS="${STOREPASS:-changeit}"
+        [ -f "$KEYSTORE" ] || { echo "ERROR: keystore not found at $KEYSTORE"; exit 1; }
+
+        echo "Using JAVA_HOME   : $JAVA_HOME"
+        echo "Keystore path     : $KEYSTORE"
+        echo "Import source dir : /etc/ssl/certs"
+
+        # --- Import loop (idempotent) ---
+        cd /etc/ssl/certs
+        shopt -s nullglob
+        for cert in *.pem; do
+          alias="${cert%.pem}"
+          if keytool -list -keystore "$KEYSTORE" -storepass "$STOREPASS" -alias "$alias" >/dev/null 2>&1; then
+            echo "Skipping $cert (alias '$alias' already present)."
+            continue
+          fi
+          echo "Importing $cert as alias '$alias'..."
+          keytool -importcert -noprompt -trustcacerts \
+            -keystore "$KEYSTORE" -storepass "$STOREPASS" \
+            -alias "$alias" -file "$cert"
+        done
+
+        # --- Post-run verification ---
+        echo "java -version:"
+        java -version
+        echo "Keystore entries (first 5):"
+        keytool -list -keystore "$KEYSTORE" -storepass "$STOREPASS" | head -n 5
+
+        echo "Done."
