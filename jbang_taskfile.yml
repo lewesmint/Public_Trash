@@ -1,0 +1,108 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  GREETING: Hello, World!
+
+tasks:
+  default:
+    cmds:
+      - echo "{{.GREETING}}"
+    silent: true
+
+  "java:01:setup:maven-only":
+    desc: "Install Maven with Java 21 (system packages)"
+    cmds:
+      - |
+        echo "Installing Maven with Java 21..."
+        sudo apt-get update
+        sudo apt-get install -y maven
+
+        echo "Maven installed successfully!"
+        echo "Verify with: mvn --version"
+
+  "java:02:setup:jbang-quarkus":
+    desc: "Install JBang with Java 21 and Quarkus CLI"
+    cmds:
+      - |
+        # Function to check if command exists
+        command_exists() {
+            command -v "$1" >/dev/null 2>&1
+        }
+
+        echo "=== Installing JBang with Java 21 and Quarkus CLI ==="
+        echo
+
+        echo "Step 1: Installing JBang using curl method..."
+        curl -Ls https://sh.jbang.dev | bash -s app setup
+
+        # Add to current session PATH
+        export PATH="$HOME/.jbang/bin:$PATH"
+        echo "Added JBang to current session PATH"
+
+        # Add to bashrc if not already there
+        if ! grep -q "jbang" ~/.bashrc; then
+          echo "" >> ~/.bashrc
+          echo "# JBang" >> ~/.bashrc
+          echo 'export PATH="$HOME/.jbang/bin:$PATH"' >> ~/.bashrc
+          echo "Added JBang to ~/.bashrc"
+        fi
+
+        # Verify JBang is accessible
+        if command_exists jbang; then
+            echo "JBang installed successfully: $(jbang --version)"
+        else
+            echo "ERROR: JBang not found in PATH!"
+            exit 1
+        fi
+        echo
+
+        echo "Step 2: Installing Java 21 via JBang..."
+        jbang jdk install 21
+        jbang jdk default 21
+        echo "Java 21 set as default"
+        echo
+
+        echo "Step 3: Adding trust for Quarkus CLI..."
+        jbang trust add https://repo1.maven.org/maven2/io/quarkus/quarkus-cli/
+        echo "Trust added for Quarkus CLI Maven repository"
+        echo
+
+        echo "Step 4: Installing Quarkus CLI..."
+        jbang app install --fresh --force quarkus@quarkusio
+
+        echo "Step 5: Verifying Quarkus CLI installation..."
+        if jbang quarkus@quarkusio --version >/dev/null 2>&1; then
+            echo "Quarkus CLI installed successfully!"
+        else
+            echo "ERROR: Quarkus CLI installation verification failed!"
+            exit 1
+        fi
+        echo
+
+        echo "=== Installation Complete! ==="
+        echo "Verifying all tools in current session:"
+        echo "- Java: $(java --version | head -1)"
+        echo "- JBang: $(jbang --version)"
+        echo "- Quarkus CLI: $(jbang quarkus@quarkusio --version)"
+        echo "- JDK List: $(jbang jdk list)"
+        echo
+        echo "Usage:"
+        echo "- Create Quarkus project: jbang quarkus@quarkusio create app my-app"
+        echo "- Or use app alias: quarkus create app my-app (after running 'source ~/.bashrc')"
+
+  "java:03:setup:all":
+    desc: "Install Maven, JBang, and Quarkus CLI (complete Java 21 setup)"
+    cmds:
+      - task java:01:setup:maven-only
+      - task java:02:setup:jbang-quarkus
+      - |
+        echo "=== Complete Java Development Setup Installed ==="
+        echo "- Maven: $(mvn --version | head -1)"
+        echo "- JBang: $(jbang --version)"
+        echo "- Quarkus CLI: $(jbang quarkus@quarkusio --version)"
+        echo ""
+        echo "Usage:"
+        echo "- Create Quarkus project: jbang quarkus@quarkusio create app my-app"
+        echo "- Or use app alias: quarkus create app my-app (after running 'source ~/.bashrc')"
