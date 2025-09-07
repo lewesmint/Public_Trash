@@ -1,0 +1,39 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  GREETING: Hello, World!
+
+tasks:
+  default:
+    cmds:
+      - echo "{{.GREETING}}"
+    silent: true
+
+  get-java-tool-options:
+    desc: "Return the JAVA_TOOL_OPTIONS string"
+    cmds:
+      - echo '"-Dhttp.proxyHost=proxy.company.com \
+        -Dhttp.proxyPort=8080 \
+        -Dhttps.proxyHost=proxy.company.com \
+        -Dhttps.proxyPort=8080"'
+    silent: true
+
+  update-java-tool-options:
+    desc: "Update JAVA_TOOL_OPTIONS in /etc/environment"
+    cmds:
+      - |
+        # Remove existing JAVA_TOOL_OPTIONS line and add new one
+        sudo sed -i '/^JAVA_TOOL_OPTIONS=/d' /etc/environment
+        JAVA_OPTIONS=$(task get-java-tool-options)
+        echo "JAVA_TOOL_OPTIONS=$JAVA_OPTIONS" | sudo tee -a /etc/environment > /dev/null
+        echo "Updated JAVA_TOOL_OPTIONS in /etc/environment"
+
+  set-local-java-options:
+    desc: "Set JAVA_TOOL_OPTIONS for current session"
+    cmds:
+      - |
+        JAVA_OPTIONS=$(task get-java-tool-options)
+        export JAVA_TOOL_OPTIONS=$JAVA_OPTIONS
+        echo "Set local JAVA_TOOL_OPTIONS: $JAVA_TOOL_OPTIONS"
