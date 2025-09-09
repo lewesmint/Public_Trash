@@ -1,0 +1,21 @@
+ensure_no_proxy_tokens() {
+  local file=$1; shift
+  local key_regex='^[[:space:]]*(export[[:space:]]+)?no_proxy[[:space:]]*='
+
+  for token in "$@"; do
+    if grep -Eqi "$key_regex" "$file"; then
+      # already has no_proxy line; make sure token is present
+      if ! grep -Eqi "$key_regex.*(^|,)[[:space:]]*$token([[:space:]]*,|$)" "$file"; then
+        # append ,token to the end of that line
+        sudo sed -i.bak -E "/$key_regex/ s|\$|,$token|" "$file"
+      fi
+    else
+      # no no_proxy line yet; create it with this token
+      echo "no_proxy=$token" | sudo tee -a "$file" >/dev/null
+    fi
+  done
+}
+
+# Usage:
+# file=/etc/environment
+# ensure_no_proxy_tokens "$file" registry minikube
