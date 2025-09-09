@@ -12,15 +12,50 @@ tasks:
           sudo chmod a+r /etc/apt/keyrings/docker.gpg
         fi
 
-        # Add Docker APT repo if not already present
+        # Add Docker repo once
         source /etc/os-release
         ARCH="$(dpkg --print-architecture)"
         LINE="deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable"
         LIST=/etc/apt/sources.list.d/docker.list
-
         if [ ! -f "$LIST" ] || ! grep -qF "$LINE" "$LIST"; then
           echo "$LINE" | sudo tee "$LIST" >/dev/null
         fi
       - sudo apt-get update -y
       - sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-      - sudo systemctl enable --now docker
+
+      # Ensure a sane daemon config (only create if missing)
+      - |
+        if [ ! -f /etc/docker/daemon.json ]; then
+          sudo install -d -m 0755 /etc/docker
+          cat <<'JSON' | sudo tee /etc/docker/daemon.json >/dev/null
+          {
+            "exec-opts": ["native.cgroupdriver=systemd"],
+            "log-driver": "json-file",
+            "log-opts": { "max-size": "100m" },
+            "storage-driver": "overlay2"
+          }
+          JSON
+        fi
+
+      # Start (reliably) and enable Docker
+      - sudo systemctl daemon-reload
+      - sudo systemctl enable docker.service
+      - sudo systemctl restart docker.service
+
+      # Wait until the socket is up (10s timeout)
+      - |
+        for i in $(seq 1 20); do
+          if sudo test -S /var/run/docker.sock; then break; fi
+          sleep 0.5
+        done
+
+      # Show status and a quick health check
+      - sudo systemctl --no-pager --full status docker.service || true
+      - sudo docker info >/dev/null 2>&1 || (echo "Docker not responding; see 'journalctl -u docker' for errors." && false)
+
+      # Optional: add current user to docker group (first run only)
+      - |
+        if ! id -nG "$USER" | grep -qw docker; then
+          sudo usermod -aG docker "$USER"
+          echo "Added $USER to 'docker' group. Open a new shell to use docker without sudo."
+        fi
