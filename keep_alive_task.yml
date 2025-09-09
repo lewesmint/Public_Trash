@@ -1,0 +1,38 @@
+version: '3'
+
+tasks:
+  # helper: keep sudo alive in the background
+  sudo:keepalive:
+    cmds:
+      - |
+        # Prompt once
+        sudo -v
+        # Launch refresher in background
+        while true; do
+          sudo -v
+          sleep 60
+        done &
+        echo $! > /tmp/sudo-keepalive.pid
+    silent: true
+
+  sudo:stopkeepalive:
+    cmds:
+      - |
+        if [ -f /tmp/sudo-keepalive.pid ]; then
+          kill "$(cat /tmp/sudo-keepalive.pid)" || true
+          rm -f /tmp/sudo-keepalive.pid
+        fi
+    silent: true
+
+  docker:install:
+    preconditions:
+      - sh: "command -v docker || true"
+        msg: "Docker not installed"
+    cmds:
+      - task: sudo:keepalive
+      - |
+        set -e
+        sudo apt-get update -y
+        sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        sudo systemctl enable --now docker
+      - task: sudo:stopkeepalive
