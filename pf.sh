@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pf.sh - manage kubectl port-forwards for PostgreSQL and RabbitMQ
+# pf.sh - manage kubectl port-forwards for PostgreSQL and RabbitMQ (UI only)
 # Usage:
 #   ./pf.sh start
 #   ./pf.sh stop
@@ -15,7 +15,6 @@ PG_SVC="postgresql"            # Service name for Postgres
 RMQ_SVC="rabbitmq"             # Service name for RabbitMQ
 
 PG_LOCAL_PORT=5432
-RMQ_AMQP_LOCAL=5672
 RMQ_UI_LOCAL=15672
 
 LOG_DIR="/tmp"
@@ -32,30 +31,28 @@ need_cmds() {
 
 # ---- PROCESS DETECTORS ----
 is_running_pg()  { pgrep -f "kubectl port-forward.*svc/${PG_SVC}.* ${PG_LOCAL_PORT}:${PG_LOCAL_PORT}" >/dev/null; }
-is_running_rmq() { pgrep -f "kubectl port-forward.*svc/${RMQ_SVC}.* ${RMQ_AMQP_LOCAL}:${RMQ_AMQP_LOCAL} .* ${RMQ_UI_LOCAL}:${RMQ_UI_LOCAL}" >/dev/null; }
+is_running_rmq() { pgrep -f "kubectl port-forward.*svc/${RMQ_SVC}.* ${RMQ_UI_LOCAL}:${RMQ_UI_LOCAL}" >/dev/null; }
 
 # ---- TARGET RESOLUTION AND WAIT ----
-# Try common labels first, then fall back to pod name grep.
-# Returns when at least one matching pod is Ready.
 wait_ready_dynamic() {
   local name="$1"   # logical app name, e.g. postgresql or rabbitmq
   local tried=""
 
   echo "Waiting for '${name}' pods in namespace '${NS}' to be Ready..."
 
-  # 1) Try modern label
+  # Try modern label
   if kubectl get pods -n "${NS}" -l "app.kubernetes.io/name=${name}" --no-headers 2>/dev/null | grep -q .; then
     tried="${tried}[label app.kubernetes.io/name=${name}] "
     kubectl wait -n "${NS}" --for=condition=ready pod -l "app.kubernetes.io/name=${name}" --timeout=180s && return 0
   fi
 
-  # 2) Try legacy app label
+  # Try legacy label
   if kubectl get pods -n "${NS}" -l "app=${name}" --no-headers 2>/dev/null | grep -q .; then
     tried="${tried}[label app=${name}] "
     kubectl wait -n "${NS}" --for=condition=ready pod -l "app=${name}" --timeout=180s && return 0
   fi
 
-  # 3) Fall back to first pod whose name contains the token
+  # Fall back to pod name grep
   local pod
   pod="$(kubectl get pods -n "${NS}" -o name 2>/dev/null | grep -Ei "pod/.+${name}" | head -n1 || true)"
   if [ -n "${pod}" ]; then
@@ -64,8 +61,6 @@ wait_ready_dynamic() {
   fi
 
   echo "Could not find a Ready pod for '${name}'. Tried: ${tried}"
-  echo "Hint: show labels for your pods with:"
-  echo "  kubectl get pods -n ${NS} -o custom-columns=NAME:.metadata.name,LABELS:.metadata.labels --no-headers"
   return 1
 }
 
@@ -90,13 +85,12 @@ start_pg() {
 
 start_rmq() {
   if is_running_rmq; then
-    echo "RabbitMQ forward already running on localhost:${RMQ_AMQP_LOCAL} and :${RMQ_UI_LOCAL}"
+    echo "RabbitMQ UI forward already running on localhost:${RMQ_UI_LOCAL}"
     return 0
   fi
   wait_ready_dynamic "rabbitmq"
-  echo "Starting RabbitMQ forward svc/${RMQ_SVC} -> localhost:${RMQ_AMQP_LOCAL} and :${RMQ_UI_LOCAL}"
-  nohup kubectl port-forward -n "${NS}" "svc/${RMQ_SVC}" \
-    "${RMQ_AMQP_LOCAL}:${RMQ_AMQP_LOCAL}" "${RMQ_UI_LOCAL}:${RMQ_UI_LOCAL}" >"${RMQ_LOG}" 2>&1 &
+  echo "Starting RabbitMQ forward svc/${RMQ_SVC} -> localhost:${RMQ_UI_LOCAL}"
+  nohup kubectl port-forward -n "${NS}" "svc/${RMQ_SVC}" "${RMQ_UI_LOCAL}:${RMQ_UI_LOCAL}" >"${RMQ_LOG}" 2>&1 &
   disown || true
   sleep 0.7
   if is_running_rmq; then
@@ -120,7 +114,7 @@ stop_pg() {
 stop_rmq() {
   if is_running_rmq; then
     echo "Stopping RabbitMQ forward..."
-    pkill -f "kubectl port-forward.*svc/${RMQ_SVC}.* ${RMQ_AMQP_LOCAL}:${RMQ_AMQP_LOCAL} .* ${RMQ_UI_LOCAL}:${RMQ_UI_LOCAL}" || true
+    pkill -f "kubectl port-forward.*svc/${RMQ_SVC}.* ${RMQ_UI_LOCAL}:${RMQ_UI_LOCAL}" || true
   else
     echo "RabbitMQ forward not running."
   fi
@@ -135,9 +129,9 @@ status() {
     echo "PostgreSQL: STOPPED"
   fi
   if is_running_rmq; then
-    echo "RabbitMQ:   RUNNING on localhost:${RMQ_AMQP_LOCAL}, http://localhost:${RMQ_UI_LOCAL} (log: ${RMQ_LOG})"
+    echo "RabbitMQ UI: RUNNING on http://localhost:${RMQ_UI_LOCAL} (log: ${RMQ_LOG})"
   else
-    echo "RabbitMQ:   STOPPED"
+    echo "RabbitMQ UI: STOPPED"
   fi
 }
 
