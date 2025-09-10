@@ -15,58 +15,73 @@ LOG_DIR="/tmp"
 PG_LOG="${LOG_DIR}/pg-portfwd.log"
 RMQ_LOG="${LOG_DIR}/rabbitmq-portfwd.log"
 
-# If set to 1, will try to start minikube if it is stopped
+# Behaviour controls
 AUTO_START_MINIKUBE="${AUTO_START_MINIKUBE:-0}"
+WAIT_TIMEOUT="${WAIT_TIMEOUT:-300}"
+WAIT_INTERVAL="${WAIT_INTERVAL:-5}"
 
 # ---- REQUIREMENTS ----
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
 need_cmds() {
-  for c in kubectl grep awk pgrep pkill nohup sed; do
+  for c in kubectl grep awk pgrep pkill nohup sed date; do
     have_cmd "$c" || { echo "Missing command: $c"; exit 1; }
   done
+  if have_cmd minikube; then :; else echo "Warning: minikube not found in PATH."; fi
 }
 
-# ---- CLUSTER CHECK ----
-check_cluster() {
-  local ctx cur is_mk mk_ok=0
+# ---- CLUSTER WAIT LOOP ----
+wait_for_cluster() {
+  local ctx cur start now elapsed
   cur="$(kubectl config current-context 2>/dev/null || true)"
-  is_mk=0
-  if have_cmd minikube && [ "${cur}" = "minikube" ]; then
-    is_mk=1
-    # Quick status check without waiting
-    if minikube status --wait=false 2>/dev/null | grep -qi "Running"; then
-      mk_ok=1
-    fi
-    if [ $mk_ok -eq 0 ]; then
-      if [ "${AUTO_START_MINIKUBE}" = "1" ]; then
-        echo "Minikube is not running. Starting it now..."
-        minikube start
+  start="$(date +%s)"
+
+  # If current context is minikube, ensure it is running
+  if [ "$cur" = "minikube" ] && have_cmd minikube; then
+    while true; do
+      if minikube status --wait=false 2>/dev/null | grep -qi "Running"; then
+        # Check API
+        if kubectl version --request-timeout=3s >/dev/null 2>&1; then
+          return 0
+        fi
       else
-        echo "Minikube context detected but it is not running."
-        echo "Start it with: minikube start"
-        echo "Or set AUTO_START_MINIKUBE=1 and rerun."
+        if [ "$AUTO_START_MINIKUBE" = "1" ]; then
+          echo "Minikube not running. Starting..."
+          minikube start || true
+        fi
+      fi
+      now="$(date +%s)"; elapsed=$(( now - start ))
+      if [ "$elapsed" -ge "$WAIT_TIMEOUT" ]; then
+        echo "Timed out waiting for Minikube and API (context: $cur)."
+        echo "Start it manually with: minikube start"
         exit 1
       fi
-    fi
+      sleep "$WAIT_INTERVAL"
+    done
   fi
 
-  # Verify API is reachable (covers non-Minikube contexts too)
-  if ! kubectl version --request-timeout=3s >/dev/null 2>&1; then
-    echo "Kubernetes API is not reachable for context '${cur}'."
-    echo "Check your kubeconfig or start your cluster, then retry."
-    [ $is_mk -eq 1 ] && echo "(If you meant to use Minikube, run 'minikube start'.)"
-    exit 1
-  fi
+  # Non-minikube context: just wait for API
+  start="$(date +%s)"
+  while true; do
+    if kubectl version --request-timeout=3s >/dev/null 2>&1; then
+      return 0
+    fi
+    now="$(date +%s)"; elapsed=$(( now - start ))
+    if [ "$elapsed" -ge "$WAIT_TIMEOUT" ]; then
+      echo "Timed out waiting for Kubernetes API (context: $cur)."
+      echo "Check your kubeconfig or cluster status."
+      exit 1
+    fi
+    sleep "$WAIT_INTERVAL"
+  done
 }
 
 # ---- PROCESS DETECTORS ----
 is_running_pg()  { pgrep -f "kubectl port-forward.*svc/${PG_SVC}.* ${PG_LOCAL_PORT}:${PG_LOCAL_PORT}" >/dev/null; }
 is_running_rmq() { pgrep -f "kubectl port-forward.*svc/${RMQ_SVC}.* ${RMQ_UI_LOCAL}:${RMQ_UI_LOCAL}" >/dev/null; }
 
-# ---- TARGET RESOLUTION AND WAIT ----
+# ---- POD READY HELPERS ----
 wait_ready_dynamic() {
-  local name="$1"
-  local tried=""
+  local name="$1" tried=""
 
   echo "Waiting for '${name}' pods in namespace '${NS}' to be Ready..."
 
@@ -100,7 +115,12 @@ start_pg() {
   nohup kubectl port-forward -n "${NS}" "svc/${PG_SVC}" "${PG_LOCAL_PORT}:${PG_LOCAL_PORT}" >"${PG_LOG}" 2>&1 &
   disown || true
   sleep 0.7
-  is_running_pg && echo "PostgreSQL forward started. Log: ${PG_LOG}" || { echo "Failed to start PostgreSQL forward. See log: ${PG_LOG}"; return 1; }
+  if is_running_pg; then
+    echo "PostgreSQL forward started. Log: ${PG_LOG}"
+  else
+    echo "Failed to start PostgreSQL forward. See log: ${PG_LOG}"
+    return 1
+  fi
 }
 
 start_rmq() {
@@ -113,7 +133,12 @@ start_rmq() {
   nohup kubectl port-forward -n "${NS}" "svc/${RMQ_SVC}" "${RMQ_UI_LOCAL}:${RMQ_UI_LOCAL}" >"${RMQ_LOG}" 2>&1 &
   disown || true
   sleep 0.7
-  is_running_rmq && echo "RabbitMQ forward started. Log: ${RMQ_LOG}" || { echo "Failed to start RabbitMQ forward. See log: ${RMQ_LOG}"; return 1; }
+  if is_running_rmq; then
+    echo "RabbitMQ forward started. Log: ${RMQ_LOG}"
+  else
+    echo "Failed to start RabbitMQ forward. See log: ${RMQ_LOG}"
+    return 1
+  fi
 }
 
 # ---- STOPPERS ----
@@ -123,8 +148,16 @@ stop_rmq() { is_running_rmq && { echo "Stopping RabbitMQ forward...";  pkill -f 
 # ---- STATUS / FLOWS ----
 status() {
   echo "Namespace: ${NS}"
-  is_running_pg  && echo "PostgreSQL: RUNNING on localhost:${PG_LOCAL_PORT} (log: ${PG_LOG})" || echo "PostgreSQL: STOPPED"
-  is_running_rmq && echo "RabbitMQ UI: RUNNING on http://localhost:${RMQ_UI_LOCAL} (log: ${RMQ_LOG})" || echo "RabbitMQ UI: STOPPED"
+  if is_running_pg; then
+    echo "PostgreSQL: RUNNING on localhost:${PG_LOCAL_PORT} (log: ${PG_LOG})"
+  else
+    echo "PostgreSQL: STOPPED"
+  fi
+  if is_running_rmq; then
+    echo "RabbitMQ UI: RUNNING on http://localhost:${RMQ_UI_LOCAL} (log: ${RMQ_LOG})"
+  else
+    echo "RabbitMQ UI: STOPPED"
+  fi
 }
 
 start_missing() { start_pg; start_rmq; status; }
@@ -143,7 +176,7 @@ auto_toggle() {
 
 # ---- MAIN ----
 need_cmds
-check_cluster
+wait_for_cluster
 
 case "${1:-auto}" in
   start)   start_missing ;;
