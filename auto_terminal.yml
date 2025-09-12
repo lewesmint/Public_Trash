@@ -1,0 +1,24 @@
+version: "3"
+
+tasks:
+  autostart-terminal:
+    desc: "Enable autostart of GNOME Terminal at login"
+    cmds:
+      - mkdir -p {{.HOME}}/.config/autostart
+      - |
+        cat > {{.HOME}}/.config/autostart/terminal.desktop <<'EOF'
+        [Desktop Entry]
+        Type=Application
+        Exec=gnome-terminal
+        Hidden=false
+        X-GNOME-Autostart-enabled=true
+        Name=Terminal
+        Comment=Start a GNOME Terminal window at login
+        EOF
+      - echo "Autostart enabled. Reboot or log out/in to test."
+
+  autostart-terminal:undo:
+    desc: "Disable autostart of GNOME Terminal at login"
+    cmds:
+      - rm -f {{.HOME}}/.config/autostart/terminal.desktop
+      - echo "Autostart disabled (removed terminal.desktop)."
