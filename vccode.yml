@@ -1,0 +1,166 @@
+version: "3"
+
+vars:
+  VSC_FRAGMENT: |
+    {
+      "files.autoSave": "afterDelay",
+      "files.autoSaveDelay": 1000,
+      "editor.formatOnSave": true,
+      "editor.tabSize": 2,
+      "editor.insertSpaces": true,
+      "editor.wordWrap": "on",
+      "workbench.colorTheme": "Abyss",
+      "terminal.integrated.defaultProfile.linux": "bash",
+      "security.workspace.trust.enabled": false,
+      "explorer.confirmDelete": false,
+      "git.autofetch": true,
+      "editor.minimap.enabled": false,
+      "workbench.startupEditor": "none",
+      "github.copilot.enable": {
+        "*": false,
+        "plaintext": false,
+        "markdown": false,
+        "scminput": false
+      }
+    }
+
+tasks:
+  configure-vscode:
+    desc: "Configure VS Code settings (Ubuntu)"
+    cmds:
+      - |
+        #!/usr/bin/env bash
+
+        # Check if jq is available
+        if ! command -v jq &> /dev/null; then
+          echo "Error: jq is required but not installed"
+          echo "Install with: sudo apt-get install jq"
+          exit 1
+        fi
+
+        VSC_DIR="$HOME/.config/Code/User"
+        VSC_SETTINGS="$VSC_DIR/settings.json"
+        
+        echo "Configuring VS Code settings..."
+        mkdir -p "$VSC_DIR"
+
+        # Create backup if file exists
+        if [[ -f "$VSC_SETTINGS" ]]; then
+          BACKUP_FILE="$VSC_SETTINGS.backup.$(date +%s)"
+          cp "$VSC_SETTINGS" "$BACKUP_FILE"
+          echo "Created backup: $BACKUP_FILE"
+          
+          # Merge with existing settings
+          if jq --argjson frag '{{.VSC_FRAGMENT}}' '. + $frag' "$VSC_SETTINGS" > "$VSC_SETTINGS.tmp"; then
+            mv "$VSC_SETTINGS.tmp" "$VSC_SETTINGS"
+            echo "Merged settings with existing configuration"
+          else
+            echo "Error merging settings"
+            rm -f "$VSC_SETTINGS.tmp"
+            exit 1
+          fi
+        else
+          # Create new settings file
+          if printf '%s\n' '{{.VSC_FRAGMENT}}' > "$VSC_SETTINGS"; then
+            echo "Created new settings file"
+          else
+            echo "Error creating settings file"
+            exit 1
+          fi
+        fi
+
+        echo "Updated $VSC_SETTINGS"
+        echo "Settings applied:"
+        echo "  • Auto-save after 1 second delay"
+        echo "  • Format on save enabled"
+        echo "  • 2-space tabs with spaces"
+        echo "  • Word wrap enabled"
+        echo "  • Abyss dark theme"
+        echo "  • Minimap disabled"
+        echo "  • Workspace trust disabled"
+        echo "  • GitHub Copilot disabled"
+
+  configure-vscode:undo:
+    desc: "Reset only the keys set by this Task (Ubuntu)"
+    cmds:
+      - |
+        #!/usr/bin/env bash
+
+        # Check if jq is available
+        if ! command -v jq &> /dev/null; then
+          echo "Error: jq is required but not installed"
+          exit 1
+        fi
+
+        VSC_DIR="$HOME/.config/Code/User"
+        VSC_SETTINGS="$VSC_DIR/settings.json"
+
+        if [[ ! -f "$VSC_SETTINGS" ]]; then
+          echo "No settings.json found. Nothing to undo."
+          exit 0
+        fi
+
+        echo "Undoing VS Code configuration..."
+        
+        # Create backup before undoing
+        BACKUP_FILE="$VSC_SETTINGS.backup.$(date +%s)"
+        cp "$VSC_SETTINGS" "$BACKUP_FILE"
+        echo "Created backup: $BACKUP_FILE"
+
+        # Remove only the top-level keys present in VSC_FRAGMENT
+        if jq --argjson frag '{{.VSC_FRAGMENT}}' \
+           'reduce ($frag | keys[]) as $k (. ; del(.[$k]))' \
+           "$VSC_SETTINGS" > "$VSC_SETTINGS.tmp"; then
+          mv "$VSC_SETTINGS.tmp" "$VSC_SETTINGS"
+          echo "Removed configured keys from $VSC_SETTINGS"
+          echo "Removed settings:"
+          echo "  • files.autoSave"
+          echo "  • files.autoSaveDelay"
+          echo "  • editor.formatOnSave"
+          echo "  • editor.tabSize"
+          echo "  • editor.insertSpaces"
+          echo "  • editor.wordWrap"
+          echo "  • workbench.colorTheme"
+          echo "  • terminal.integrated.defaultProfile.linux"
+          echo "  • security.workspace.trust.enabled"
+          echo "  • explorer.confirmDelete"
+          echo "  • git.autofetch"
+          echo "  • editor.minimap.enabled"
+          echo "  • workbench.startupEditor"
+          echo "  • github.copilot.enable"
+        else
+          echo "Error removing settings"
+          rm -f "$VSC_SETTINGS.tmp"
+          exit 1
+        fi
+
+  configure-vscode:status:
+    desc: "Show current VS Code settings status"
+    cmds:
+      - |
+        #!/usr/bin/env bash
+        
+        VSC_DIR="$HOME/.config/Code/User"
+        VSC_SETTINGS="$VSC_DIR/settings.json"
+        
+        echo "VS Code Settings Status:"
+        echo "Settings file: $VSC_SETTINGS"
+        
+        if [[ -f "$VSC_SETTINGS" ]]; then
+          echo "Settings file exists"
+          echo "File size: $(stat -c%s "$VSC_SETTINGS") bytes"
+          echo "Last modified: $(stat -c%y "$VSC_SETTINGS")"
+          
+          if command -v jq &> /dev/null; then
+            echo ""
+            echo "Configured keys from this task:"
+            jq -r 'keys[] | select(. as $k | ["files.autoSave", "files.autoSaveDelay", "editor.formatOnSave", "editor.tabSize", "editor.insertSpaces", "editor.wordWrap", "workbench.colorTheme", "terminal.integrated.defaultProfile.linux", "security.workspace.trust.enabled", "explorer.confirmDelete", "git.autofetch", "editor.minimap.enabled", "workbench.startupEditor", "github.copilot.enable"] | index($k)) | "  • " + .' "$VSC_SETTINGS" 2>/dev/null || echo "  (none found)"
+          fi
+        else
+          echo "Settings file does not exist"
+        fi
+
+  help:
+    desc: "Show available tasks"
+    cmds:
+      - task --list
