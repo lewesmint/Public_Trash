@@ -25,7 +25,7 @@ vars:
     }
 
 tasks:
-  configure-vscode:
+  04:vs-code-configure:
     desc: "Configure VS Code settings (Ubuntu)"
     cmds:
       - |
@@ -71,16 +71,9 @@ tasks:
 
         echo "Updated $VSC_SETTINGS"
         echo "Settings applied:"
-        echo "  • Auto-save after 1 second delay"
-        echo "  • Format on save enabled"
-        echo "  • 2-space tabs with spaces"
-        echo "  • Word wrap enabled"
-        echo "  • Abyss dark theme"
-        echo "  • Minimap disabled"
-        echo "  • Workspace trust disabled"
-        echo "  • GitHub Copilot disabled"
+        echo '{{.VSC_FRAGMENT}}' | jq -r 'keys[] | "  • " + .'
 
-  configure-vscode:undo:
+  04:vs-code-undo:
     desc: "Reset only the keys set by this Task (Ubuntu)"
     cmds:
       - |
@@ -114,50 +107,11 @@ tasks:
           mv "$VSC_SETTINGS.tmp" "$VSC_SETTINGS"
           echo "Removed configured keys from $VSC_SETTINGS"
           echo "Removed settings:"
-          echo "  • files.autoSave"
-          echo "  • files.autoSaveDelay"
-          echo "  • editor.formatOnSave"
-          echo "  • editor.tabSize"
-          echo "  • editor.insertSpaces"
-          echo "  • editor.wordWrap"
-          echo "  • workbench.colorTheme"
-          echo "  • terminal.integrated.defaultProfile.linux"
-          echo "  • security.workspace.trust.enabled"
-          echo "  • explorer.confirmDelete"
-          echo "  • git.autofetch"
-          echo "  • editor.minimap.enabled"
-          echo "  • workbench.startupEditor"
-          echo "  • github.copilot.enable"
+          echo '{{.VSC_FRAGMENT}}' | jq -r 'keys[] | "  • " + .'
         else
           echo "Error removing settings"
           rm -f "$VSC_SETTINGS.tmp"
           exit 1
-        fi
-
-  configure-vscode:status:
-    desc: "Show current VS Code settings status"
-    cmds:
-      - |
-        #!/usr/bin/env bash
-        
-        VSC_DIR="$HOME/.config/Code/User"
-        VSC_SETTINGS="$VSC_DIR/settings.json"
-        
-        echo "VS Code Settings Status:"
-        echo "Settings file: $VSC_SETTINGS"
-        
-        if [[ -f "$VSC_SETTINGS" ]]; then
-          echo "Settings file exists"
-          echo "File size: $(stat -c%s "$VSC_SETTINGS") bytes"
-          echo "Last modified: $(stat -c%y "$VSC_SETTINGS")"
-          
-          if command -v jq &> /dev/null; then
-            echo ""
-            echo "Configured keys from this task:"
-            jq -r 'keys[] | select(. as $k | ["files.autoSave", "files.autoSaveDelay", "editor.formatOnSave", "editor.tabSize", "editor.insertSpaces", "editor.wordWrap", "workbench.colorTheme", "terminal.integrated.defaultProfile.linux", "security.workspace.trust.enabled", "explorer.confirmDelete", "git.autofetch", "editor.minimap.enabled", "workbench.startupEditor", "github.copilot.enable"] | index($k)) | "  • " + .' "$VSC_SETTINGS" 2>/dev/null || echo "  (none found)"
-          fi
-        else
-          echo "Settings file does not exist"
         fi
 
   help:
