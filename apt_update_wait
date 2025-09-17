@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+# Locks that can block apt
+LOCKS=(
+  /var/lib/apt/lists/lock
+  /var/lib/dpkg/lock-frontend
+  /var/lib/dpkg/lock
+)
+
+# Cache sudo credentials up front (will prompt once)
+sudo -v || { echo "Need sudo privileges to proceed."; exit 1; }
+
+echo "Checking apt/dpkg locks. Press Ctrl+C to cancel."
+
+# Loop until all locks are free
+while true; do
+  BLOCKED=0
+  for f in "${LOCKS[@]}"; do
+    if sudo fuser "$f" >/dev/null 2>&1; then
+      BLOCKED=1
+      echo "Lock in use: $f"
+    fi
+  done
+  if [ $BLOCKED -eq 0 ]; then
+    echo "All locks are free."
+    break
+  fi
+  sleep 5
+done
+
+# Update package lists
+echo "Running: sudo apt update"
+sudo apt update
