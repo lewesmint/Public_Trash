@@ -1,0 +1,31 @@
+version: '3'
+
+tasks:
+  apt-update-once:
+    internal: true
+    cmds:
+      - |
+        # Clean up old apt update flags (older than 1 day)
+        find /tmp -name "apt-updated-*" -type f -mtime +0 -delete 2>/dev/null || true
+        
+        # Check if we've updated in this terminal session
+        FLAG_FILE="/tmp/apt-updated-$$"
+        if [ ! -f "$FLAG_FILE" ]; then
+          echo "Running apt update for this session..."
+          sudo apt update
+          touch "$FLAG_FILE"
+        else
+          echo "apt update already done in this session"
+        fi
+
+  install-something:
+    desc: Install a package (example usage)
+    cmds:
+      - task: apt-update-once
+      - sudo apt install -y some-package
+
+  another-task:
+    desc: Another task that needs apt update
+    cmds:
+      - task: apt-update-once
+      - sudo apt install -y another-package
