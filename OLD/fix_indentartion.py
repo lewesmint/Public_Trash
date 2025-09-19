@@ -58,8 +58,8 @@ def process_file(input_filepath: str, output_filepath: str) -> None:
         outfile.write(corrected_code)
 
 if __name__ == "__main__":
-    input_filepath = 'OLD/infile.py'
-    output_filepath = 'OLD/outfile.py'
+    input_filepath = 'infile.py'
+    output_filepath = 'outfile.py'
 
     process_file(input_filepath, output_filepath)
     print(f"Corrected code written to {output_filepath}")
