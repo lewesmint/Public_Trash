@@ -38,7 +38,7 @@ tasks:
   # Named tasks (alphabetical order)
   _cache-images:
     desc: "Cache chart images on host Docker"
-    internal: true
+    # internal: true
     cmds:
       - |
         if ! command -v docker >/dev/null 2>&1; then
@@ -77,27 +77,33 @@ tasks:
           return 1
         }
 
-        CACHED=0 FAILED=0
+        CACHED=0 FAILED=0 SKIPPED=0
         for image in "${IMAGES[@]}"; do
-          echo "Pulling $image..."
-          if retry_with_backoff "docker pull $image" "pulling $image"; then
-            ((CACHED++))
+          if docker images --format "{{`{{.Repository}}:{{.Tag}}`}}" | grep -q "^${image}$"; then
+            echo "Already cached: $image"
+            ((SKIPPED++))
           else
-            echo "Failed: $image"
-            ((FAILED++))
+            echo "Pulling $image..."
+            if retry_with_backoff "docker pull $image" "pulling $image"; then
+              ((CACHED++))
+            else
+              echo "Failed: $image"
+              ((FAILED++))
+            fi
           fi
         done
 
         if [ $FAILED -eq 0 ]; then
-          echo "Cached $CACHED images successfully"
+          echo "Images: $CACHED newly cached, $SKIPPED already cached"
         else
-          echo "Cached $CACHED images, Failed $FAILED"
+          echo "Images: $CACHED newly cached, $SKIPPED already cached, $FAILED failed"
           exit 1
         fi
 
   _load-images:
     desc: "Load cached images into minikube"
     internal: true
+    deps: [_cache-images]
     cmds:
       - |
         if ! command -v minikube >/dev/null 2>&1; then
@@ -163,7 +169,7 @@ tasks:
 
   03:install-bitnami-images:
     desc: "Install Bitnami charts with legacy images"
-    deps: [_setup-directories, _cache-images, _load-images]
+    deps: [_setup-directories, _load-images]
     cmds:
       - |
         if ! command -v helm >/dev/null 2>&1; then
@@ -567,7 +573,7 @@ tasks:
     cmds:
       - task: uninstall-namespace
         vars:
-          TARGET_NAMESPACE: "{{.NAMESPACE}}"        
+          TARGET_NAMESPACE: "{{.NAMESPACE}}"
 
 
   12:clean:
@@ -635,6 +641,34 @@ tasks:
       - task: 03:install-bitnami-images
       - task: 04:install-prometheus-operator
       - task: 05:create-configmaps
+      - task: post-setup-status
+
+  post-setup-status:
+    desc: "Show detailed status after setup completion"
+    cmds:
+      - |
+        echo "=== SETUP COMPLETE ==="
+        echo
+        echo "PODS IN NEVADA NAMESPACE:"
+        kubectl get pods -n nevada -o wide
+        echo
+        echo "PODS IN MONITORING NAMESPACE:"
+        kubectl get pods -n monitoring -o wide
+        echo
+        echo "SERVICES:"
+        kubectl get services -n nevada
+        kubectl get services -n monitoring
+        echo
+        echo "PERSISTENT VOLUMES:"
+        kubectl get pv
+        echo
+        echo "HELM RELEASES:"
+        helm list --all-namespaces
+        echo
+        echo "=== ACCESS INFORMATION ==="
+        echo "Grafana: kubectl port-forward -n monitoring svc/prometheus-operator-grafana 3000:80"
+        echo "Prometheus: kubectl port-forward -n monitoring svc/prometheus-operator-kube-p-prometheus 9090:9090"
+        echo "Keycloak: kubectl port-forward -n nevada svc/keycloak 8080:80"
 
   lint:
     desc: "Lint Taskfile and check tools"
