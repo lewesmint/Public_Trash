@@ -1,0 +1,651 @@
+---
+version: '3'
+
+# Minikube-specific tasks for chart deployment and management
+vars:
+  NAMESPACE: nevada
+  CHARTS_DIR: "../charts"
+  VALUES_DIR: "../values"
+
+  # Retry and timeout configuration
+  RETRY_MAX: 3
+  RETRY_DELAY: 2
+  RETRY_MAX_DELAY: 30
+  HELM_TIMEOUT: 120s
+
+  CHART_VERSIONS:
+    - "rabbitmq:16.0.14"
+    - "postgresql:16.7.27"
+    - "redis:22.0.7"
+    - "keycloak:25.2.0"
+
+  CACHE_IMAGES:
+    - "bitnamilegacy/redis:latest"
+    - "bitnamilegacy/redis-sentinel:latest"
+    - "bitnamilegacy/redis-exporter:latest"
+    - "bitnamilegacy/rabbitmq:latest"
+    - "kbudde/rabbitmq-exporter:latest"
+    - "bitnamilegacy/postgresql:latest"
+    - "bitnamilegacy/postgres-exporter:latest"
+    - "bitnamilegacy/keycloak:latest"
+    - "bitnamilegacy/os-shell:latest"
+
+# Global environment variables
+env:
+  KUBECONFIG: "{{.HOME}}/.kube/config"
+
+tasks:
+  # Named tasks (alphabetical order)
+  _cache-images:
+    desc: "Cache chart images on host Docker"
+    internal: true
+    cmds:
+      - |
+        if ! command -v docker >/dev/null 2>&1; then
+          echo "Docker not installed"
+          exit 1
+        fi
+
+        if ! docker info >/dev/null 2>&1; then
+          echo "Docker not running or not accessible"
+          exit 1
+        fi
+
+        echo "Caching chart images..."
+        IMAGES=({{range .CACHE_IMAGES}}"{{.}}" {{end}})
+
+        retry_with_backoff() {
+          local cmd="$1"
+          local description="$2"
+          local max_retries={{.RETRY_MAX}}
+          local delay={{.RETRY_DELAY}}
+          local max_delay={{.RETRY_MAX_DELAY}}
+
+          for ((i=1; i<=max_retries; i++)); do
+            if eval "$cmd"; then
+              return 0
+            fi
+            if [ $i -lt $max_retries ]; then
+              sleep $delay
+              delay=$((delay * 2))
+              if [ $delay -gt $max_delay ]; then
+                delay=$max_delay
+              fi
+            fi
+          done
+          echo "Failed: $description"
+          return 1
+        }
+
+        CACHED=0 FAILED=0
+        for image in "${IMAGES[@]}"; do
+          echo "Pulling $image..."
+          if retry_with_backoff "docker pull $image" "pulling $image"; then
+            ((CACHED++))
+          else
+            echo "Failed: $image"
+            ((FAILED++))
+          fi
+        done
+
+        if [ $FAILED -eq 0 ]; then
+          echo "Cached $CACHED images successfully"
+        else
+          echo "Cached $CACHED images, Failed $FAILED"
+          exit 1
+        fi
+
+  _load-images:
+    desc: "Load cached images into minikube"
+    internal: true
+    cmds:
+      - |
+        if ! command -v minikube >/dev/null 2>&1; then
+          echo "Minikube not installed"
+          exit 1
+        fi
+
+        if ! minikube status >/dev/null 2>&1; then
+          echo "Minikube not running"
+          exit 1
+        fi
+
+        if ! command -v docker >/dev/null 2>&1; then
+          echo "Docker not installed"
+          exit 1
+        fi
+
+        echo "Loading cached images into minikube..."
+        IMAGES=({{range .CACHE_IMAGES}}"{{.}}" {{end}})
+
+        LOADED=0 FAILED=0
+        for image in "${IMAGES[@]}"; do
+          if docker images --format "{{`{{.Repository}}:{{.Tag}}`}}" | grep -q "^${image}$"; then
+            echo "Loading $image..."
+            if minikube image load "$image"; then
+              ((LOADED++))
+            else
+              echo "Failed to load: $image"
+              ((FAILED++))
+            fi
+          else
+            echo "Image not cached: $image (run 'task cache-images' first)"
+            ((FAILED++))
+          fi
+        done
+
+        if [ $FAILED -eq 0 ]; then
+          echo "Loaded $LOADED images into minikube"
+        else
+          echo "Loaded $LOADED images, Failed $FAILED"
+          exit 1
+        fi
+
+  _setup-directories:
+    desc: "Create required directories"
+    internal: true
+    cmds:
+      - mkdir -p "{{.CHARTS_DIR}}"
+      - mkdir -p "{{.VALUES_DIR}}"
+
+  02:start-minikube:
+    desc: "Start minikube cluster"
+    cmds:
+      - |
+        if minikube status >/dev/null 2>&1; then
+          echo "Minikube is already running"
+          minikube status
+        else
+          echo "Starting minikube cluster..."
+          minikube start
+          echo "Minikube started successfully"
+        fi
+
+  03:install-bitnami-images:
+    desc: "Install Bitnami charts with legacy images"
+    deps: [_setup-directories, _cache-images, _load-images]
+    cmds:
+      - |
+        if ! command -v helm >/dev/null 2>&1; then
+          echo "Helm not installed"
+          exit 1
+        fi
+
+        if ! command -v kubectl >/dev/null 2>&1; then
+          echo "kubectl not installed"
+          exit 1
+        fi
+
+        if ! minikube status >/dev/null 2>&1; then
+          echo "Minikube not running"
+          exit 1
+        fi
+
+        echo "Installing Bitnami charts with legacy images..."
+        kubectl create namespace {{.NAMESPACE}} --dry-run=client -o yaml | kubectl apply -f -
+        parse_chart_version() {
+          local chart_spec="$1"
+          local chart="${chart_spec%:*}"
+          local version="${chart_spec#*:}"
+          if [ "$version" = "$chart" ] || [ -z "$version" ]; then
+            for chart_version in {{range .CHART_VERSIONS}}"{{.}}" {{end}}; do
+              chart_name="${chart_version%:*}"
+              chart_ver="${chart_version#*:}"
+              if [ "$chart_name" = "$chart" ]; then
+                version="$chart_ver"
+                break
+              fi
+            done
+            if [ -z "$version" ]; then
+              echo "Unknown chart: $chart" >&2
+              return 1
+            fi
+          fi
+          echo "$chart:$version"
+        }
+
+        retry_with_backoff() {
+          local cmd="$1"
+          local description="$2"
+          local max_retries={{.RETRY_MAX}}
+          local delay={{.RETRY_DELAY}}
+          local max_delay={{.RETRY_MAX_DELAY}}
+
+          for ((i=1; i<=max_retries; i++)); do
+            if eval "$cmd"; then
+              return 0
+            fi
+            if [ $i -lt $max_retries ]; then
+              sleep $delay
+              delay=$((delay * 2))
+              if [ $delay -gt $max_delay ]; then
+                delay=$max_delay
+              fi
+            fi
+          done
+          echo "Failed: $description"
+          return 1
+        }
+
+        write_image_config() {
+          local image="$1"
+          local indent="${2:-}"
+          echo -e "${indent}image:\n${indent}  repository: ${image%:*}\n${indent}  tag: \"${image#*:}\""
+        }
+
+        write_volume_permissions() {
+          local shell_image="$1"
+          local indent="${2:-}"
+          echo -e "${indent}volumePermissions:\n${indent}  enabled: true\n${indent}  image:\n${indent}    repository: ${shell_image%:*}\n${indent}    tag: \"${shell_image#*:}\""
+        }
+
+        write_metrics_disabled() {
+          local indent="${1:-}"
+          echo -e "${indent}metrics:\n${indent}  enabled: false"
+        }
+
+        write_standard_chart() {
+          local main_image="$1"
+          local shell_image="$2"
+          write_image_config "$main_image"
+          write_metrics_disabled
+          write_volume_permissions "$shell_image"
+        }
+
+        create_legacy_values() {
+          local chart_name="$1"
+          local values_file="{{.VALUES_DIR}}/${chart_name}-legacy-values.yaml"
+
+          case "$chart_name" in
+            "redis")
+              local main_image="bitnamilegacy/redis:latest"
+              local sentinel_image="bitnamilegacy/redis-sentinel:latest"
+              local shell_image="bitnamilegacy/os-shell:latest"
+
+              {
+                echo "global:"
+                echo "  security:"
+                echo "    allowInsecureImages: true"
+                echo
+                write_image_config "$main_image"
+                echo "sentinel:"
+                write_image_config "$sentinel_image" "  "
+                echo "  metrics:"
+                echo "    enabled: false"
+                write_metrics_disabled
+                write_volume_permissions "$shell_image"
+              } > "$values_file"
+              ;;
+            "rabbitmq"|"postgresql")
+              local main_image shell_image
+              case "$chart_name" in
+                "rabbitmq")
+                  main_image="bitnamilegacy/rabbitmq:latest"
+                  shell_image="bitnamilegacy/os-shell:latest"
+                  ;;
+                "postgresql")
+                  main_image="bitnamilegacy/postgresql:latest"
+                  shell_image="bitnamilegacy/os-shell:latest"
+                  ;;
+              esac
+              {
+                echo "global:"
+                echo "  security:"
+                echo "    allowInsecureImages: true"
+                echo
+                write_standard_chart "$main_image" "$shell_image"
+              } > "$values_file"
+              ;;
+            "keycloak")
+              local main_image="bitnamilegacy/keycloak:latest"
+
+              local pg_password=""
+              if kubectl get secret postgresql -n {{.NAMESPACE}} >/dev/null 2>&1; then
+                pg_password=$(kubectl get secret postgresql -n {{.NAMESPACE}} -o jsonpath="{.data.postgres-password}" | base64 -d)
+              else
+                echo "Warning: PostgreSQL secret not found, using default password"
+                pg_password="postgres123"
+              fi
+
+              {
+                echo "global:"
+                echo "  security:"
+                echo "    allowInsecureImages: true"
+                echo
+                write_image_config "$main_image"
+                echo
+                echo "auth:"
+                echo "  adminUser: admin"
+                echo "  adminPassword: admin123"
+                echo
+                echo "postgresql:"
+                echo "  enabled: false"
+                echo
+                echo "externalDatabase:"
+                echo "  host: postgresql"
+                echo "  port: 5432"
+                echo "  user: postgres"
+                echo "  password: \"$pg_password\""
+                echo "  database: postgres"
+                echo
+                echo "extraEnvVars:"
+                echo "  - name: KC_DB"
+                echo "    value: \"postgres\""
+                echo "  - name: KC_DB_URL"
+                echo "    value: \"jdbc:postgresql://postgresql:5432/postgres\""
+                echo "  - name: KC_DB_USERNAME"
+                echo "    value: \"postgres\""
+                echo "  - name: KC_DB_PASSWORD"
+                echo "    value: \"$pg_password\""
+                echo
+                echo "metrics:"
+                echo "  enabled: false"
+              } > "$values_file"
+              ;;
+          esac
+
+          echo "$values_file"
+        }
+
+        CHART_VERSIONS=({{range .CHART_VERSIONS}}"{{.}}" {{end}})
+        FAILED_CHARTS=""
+        SUCCESS_COUNT=0
+
+        process_chart() {
+          local chart="$1"
+          local version="$2"
+          local chart_file="{{.CHARTS_DIR}}/${chart}-${version}.tgz"
+
+          echo "Processing: $chart:$version"
+
+          if [ ! -f "$chart_file" ]; then
+            if ! retry_with_backoff "helm pull oci://registry-1.docker.io/bitnamicharts/$chart --version $version --destination {{.CHARTS_DIR}}" "downloading $chart:$version"; then
+              return 1
+            fi
+          fi
+
+          local values_file=$(create_legacy_values "$chart")
+          if retry_with_backoff "helm upgrade --install $chart $chart_file --namespace {{.NAMESPACE}} --values $values_file --timeout {{.HELM_TIMEOUT}} --wait" "installing $chart"; then
+            return 0
+          else
+            return 1
+          fi
+        }
+
+        for chart_spec in "${CHART_VERSIONS[@]}"; do
+          chart_version=$(parse_chart_version "$chart_spec")
+          chart="${chart_version%:*}"
+          version="${chart_version#*:}"
+
+          if [ "$chart" = "keycloak" ]; then
+            echo "Checking PostgreSQL dependency for Keycloak..."
+            if ! kubectl rollout status statefulset/postgresql -n {{.NAMESPACE}} --timeout=120s >/dev/null 2>&1; then
+              echo "Error: PostgreSQL must be ready before installing Keycloak"
+              FAILED_CHARTS="$FAILED_CHARTS $chart"
+              continue
+            fi
+          fi
+
+          if process_chart "$chart" "$version"; then
+            SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+          else
+            FAILED_CHARTS="$FAILED_CHARTS $chart"
+          fi
+        done
+
+        echo "Installed: $SUCCESS_COUNT charts"
+        if [ -n "$FAILED_CHARTS" ]; then
+         echo "Failed:$FAILED_CHARTS"
+         exit 1
+        fi
+
+  04:install-prometheus-operator:
+    desc: "Install Prometheus operator"
+    vars:
+      MONITORING_NAMESPACE: '{{.MONITORING_NAMESPACE | default "monitoring"}}'
+    cmds:
+      - |
+        echo "Installing Prometheus operator..."
+
+        if ! helm repo list | grep -q prometheus-community; then
+          echo "Adding prometheus-community Helm repository..."
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+        fi
+
+        kubectl create namespace {{.MONITORING_NAMESPACE}} --dry-run=client -o yaml | kubectl apply -f -
+
+        # Install or upgrade kube-prometheus-stack
+        helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \
+          --namespace {{.MONITORING_NAMESPACE}} \
+          --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false \
+          --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false \
+          --set prometheus.prometheusSpec.ruleSelectorNilUsesHelmValues=false \
+          --set prometheus.prometheusSpec.retention=30d \
+          --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage=10Gi \
+          --set grafana.adminPassword=admin123 \
+          --set grafana.persistence.enabled=true \
+          --set grafana.persistence.size=5Gi \
+          --set alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec.resources.requests.storage=5Gi \
+          --timeout 300s \
+          --wait
+
+        echo -e "Prometheus operator installed!\nAccess:\n  Grafana: http://localhost:3000 (admin/admin123)\n  Prometheus: http://localhost:9090\n  AlertManager: http://localhost:9093\n\nPort-forward:\n  kubectl port-forward -n {{.MONITORING_NAMESPACE}} svc/prometheus-operator-grafana 3000:80\n  kubectl port-forward -n {{.MONITORING_NAMESPACE}} svc/prometheus-operator-kube-p-prometheus 9090:9090\n  kubectl port-forward -n {{.MONITORING_NAMESPACE}} svc/prometheus-operator-kube-p-alertmanager 9093:9093"
+
+  05:create-configmaps:
+    desc: "Create service ConfigMaps in nevada namespace"
+    cmds:
+      - |
+        echo "Creating ConfigMaps in {{.NAMESPACE}} namespace..."
+        kubectl create namespace {{.NAMESPACE}} --dry-run=client -o yaml | kubectl apply -f -
+
+        kubectl create configmap redis-config \
+          --from-literal=redis.conf="" \
+          --namespace={{.NAMESPACE}} \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        kubectl create configmap postgresql-config \
+          --from-literal=postgresql.conf="" \
+          --namespace={{.NAMESPACE}} \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        kubectl create configmap rabbitmq-config \
+          --from-literal=rabbitmq.conf="" \
+          --namespace={{.NAMESPACE}} \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        echo "ConfigMaps created successfully in {{.NAMESPACE}} namespace"
+        kubectl get configmaps -n {{.NAMESPACE}}
+
+
+  06:list-charts:
+    desc: "List downloaded charts"
+    deps: [_setup-directories]
+    cmds:
+      - |
+        charts_dir="{{.CHARTS_DIR}}"
+        echo "Charts in $charts_dir:"
+        if ls "$charts_dir"/*.tgz >/dev/null 2>&1; then
+          for chart in "$charts_dir"/*.tgz; do
+            basename "$chart"
+          done
+        else
+          echo "No charts found"
+        fi
+
+        echo -e "\nDisk usage:"
+        du -sh "$charts_dir" 2>/dev/null || echo "Charts directory not found"
+
+  07:list-images:
+    desc: "List cached Bitnami legacy images"
+    cmds:
+      - |
+        echo "HOST IMAGES"
+        if docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" | grep -E "(bitnamilegacy|kbudde)" | head -20; then
+          echo "Total: $(docker images | grep -E '(bitnamilegacy|kbudde)' | wc -l)"
+        else
+          echo "No images found"
+        fi
+
+        echo -e "\nMINIKUBE IMAGES"
+        if minikube status >/dev/null 2>&1; then
+          result=$(minikube ssh -- 'docker images | grep -E "(bitnamilegacy|kbudde)"')
+          if [ -n "$result" ]; then
+            echo "$result" | head -20
+            echo "Total: $(echo "$result" | wc -l)"
+          else
+            echo "No images found"
+          fi
+        else
+          echo "Minikube not running"
+        fi
+
+        echo -e "\nUSAGE\nMain workflow: task minikube:00-setup-all\nIndividual steps: task minikube:01-start-minikube, task minikube:02-install-bitnami-images"
+
+  08:status:
+    desc: "Show minikube and helm status"
+    cmds:
+      - |
+        echo "MINIKUBE"
+        minikube status || echo "Not running"
+
+        echo -e "\nCLUSTER"
+        kubectl cluster-info || echo "Cannot connect"
+
+        echo -e "\nNAMESPACES"
+        kubectl get namespaces || echo "Cannot get namespaces"
+
+        echo -e "\nHELM RELEASES"
+        helm list --all-namespaces || echo "None found"
+
+        echo -e "\nPODS ({{.NAMESPACE}})"
+        kubectl get pods -n {{.NAMESPACE}} || echo "None found"
+
+        echo -e "\nSERVICES ({{.NAMESPACE}})"
+        kubectl get services -n {{.NAMESPACE}} || echo "None found"
+
+  09:uninstall-all-namespaces:
+    desc: "Uninstall charts from all application namespaces"
+    cmds:
+      - task: uninstall-namespace
+        vars:
+          TARGET_NAMESPACE: "{{.NAMESPACE}}"
+      - task: uninstall-namespace
+        vars:
+          TARGET_NAMESPACE: "monitoring"
+
+  10:uninstall-namespace:
+    desc: "Uninstall all charts from namespace"
+    vars:
+      TARGET_NAMESPACE: '{{.TARGET_NAMESPACE | default .NAMESPACE}}'
+    cmds:
+      - |
+        namespace="{{.TARGET_NAMESPACE}}"
+        echo "Uninstalling all Helm releases from namespace: $namespace"
+
+        releases=$(helm list -n "$namespace" -q 2>/dev/null || echo "")
+
+        if [ -z "$releases" ]; then
+          echo "No Helm releases found in namespace $namespace"
+        else
+          echo "Found releases: $releases"
+
+          # Uninstall each release
+          for release in $releases; do
+            echo "Uninstalling release: $release"
+            helm uninstall "$release" -n "$namespace" || echo "Failed to uninstall $release"
+          done
+        fi
+
+        echo "Deleting namespace: $namespace"
+        kubectl delete namespace "$namespace" --ignore-not-found=true
+
+        echo "Cleanup completed for $namespace"
+
+  11:uninstall-nevada:
+    desc: "Uninstall all charts from nevada namespace"
+    cmds:
+      - task: uninstall-namespace
+        vars:
+          TARGET_NAMESPACE: "{{.NAMESPACE}}"        
+
+
+  12:clean:
+    desc: "Clean downloaded charts"
+    cmds:
+      - |
+        charts_dir="{{.CHARTS_DIR}}"
+        if [ -d "$charts_dir" ]; then
+          echo "Cleaning charts directory: $charts_dir"
+          rm -rf "$charts_dir"/*.tgz
+          echo "Charts cleaned"
+        else
+          echo "Charts directory not found: $charts_dir"
+        fi
+
+  13:clean-slate:
+    desc: "Delete minikube, helm repos, charts etc"
+    cmds:
+      - |
+        echo "WARNING: This will delete EVERYTHING for a clean slate test!"
+        echo "- Minikube cluster"
+        echo "- All Helm repositories"
+        echo "- Downloaded charts"
+        echo "- Cached Docker images"
+        read -p "Are you sure? Type 'yes' to continue: " confirm
+        if [ "$confirm" = "yes" ]; then
+          echo "Performing clean slate reset..."
+
+          echo "Deleting minikube cluster..."
+          minikube delete || echo "Minikube already deleted or not found"
+
+          echo "Removing Helm repositories..."
+          helm repo list | awk 'NR>1 {print $1}' | xargs -I {} helm repo remove {} || echo "No repos to remove"
+
+          echo "Cleaning charts..."
+          rm -rf "{{.CHARTS_DIR}}"/*.tgz || echo "No charts to clean"
+
+          echo "Cleaning cached images..."
+          docker images | grep -E '(bitnamilegacy|kbudde)' | awk '{print $3}' | xargs -r docker rmi || true
+
+          echo "Clean slate complete - system ready for fresh testing"
+        else
+          echo "Operation cancelled"
+        fi
+
+  14:delete-minikube:
+    desc: "Delete the entire minikube cluster"
+    cmds:
+      - |
+        echo "WARNING: This will delete the entire minikube cluster!"
+        echo "All data, namespaces, and configurations will be lost."
+        read -p "Are you sure? Type 'yes' to continue: " confirm
+        if [ "$confirm" = "yes" ]; then
+          echo "Deleting minikube cluster..."
+          minikube delete
+          echo "Minikube cluster deleted"
+        else
+          echo "Operation cancelled"
+        fi
+
+  01:setup-all:
+    desc: "Complete setup: minikube, charts, and monitoring"
+    cmds:
+      - task: 02:start-minikube
+      - task: 03:install-bitnami-images
+      - task: 04:install-prometheus-operator
+      - task: 05:create-configmaps
+
+  lint:
+    desc: "Lint Taskfile and check tools"
+    cmds:
+      - |
+        command -v yamllint >/dev/null 2>&1 && yamllint -d '{extends: default, rules: {line-length: disable}}' Taskfile.yml || echo "yamllint not installed"
+      - command -v helm >/dev/null 2>&1 && helm version || true
+      - command -v kubectl >/dev/null 2>&1 && kubectl version --client || true
+      - command -v minikube >/dev/null 2>&1 && minikube version || true
+
+  default:
+    desc: Show available minikube tasks
+    cmds:
+      - task --list
