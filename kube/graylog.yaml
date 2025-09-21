@@ -106,7 +106,6 @@ graylog:
   ## Annotations to be added to Graylog pods
   ##
   podAnnotations: {}
-
   ## If specified, indicates the pod's priority.
   ##
   # priorityClassName:
