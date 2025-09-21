@@ -59,9 +59,9 @@ graylog:
     pullPolicy: "IfNotPresent"
 
   ## Graylog default Java option
-  ## JavaOpts "-Dlog4j2.formatMsgNoLookups=true -Djdk.tls.acknowledgeCloseNotify=true -XX:+UnlockExperimentalVMOptions -XX:-OmitStackTraceInFastThrow -XX:+UseG1GC -server"
+  # JavaOpts "-Dlog4j2.formatMsgNoLookups=true -Djdk.tls.acknowledgeCloseNotify=true -XX:+UnlockExperimentalVMOptions -XX:-OmitStackTraceInFastThrow -XX:+UseG1GC -server"
   javaOpts: "-Dlog4j2.formatMsgNoLookups=true -Djdk.tls.acknowledgeCloseNotify=true -XX:+UnlockExperimentalVMOptions -XX:-OmitStackTraceInFastThrow -XX:+UseG1GC -server"
-  
+
   ## Number of Graylog instance
   ##
   replicas: 1
@@ -106,11 +106,12 @@ graylog:
   ## Annotations to be added to Graylog pods
   ##
   podAnnotations: {}
+
   ## If specified, indicates the pod's priority.
   ##
   # priorityClassName:
 
-  ## Set security context for defining priviledge and accessing control settings entire Pod
+  ## Set security context for defining privilege and accessing control settings entire Pod
   ## Ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
   ##
   podSecurityContext:
@@ -161,7 +162,7 @@ graylog:
       enabled: false
       host: http://your.proxy.host:8080
 
-    loctions: []
+    locations: []
     # - name: graylog-plugin-slack-notification-4.1.1.jar
     #   url: https://github.com/KongZ/graylog-plugin-slack-notification/releases/download/v4.1.1/graylog-plugin-slack-notification-4.1.1.jar
     # - name: graylog-plugin-function-check-diff-1.0.1.jar
@@ -339,7 +340,7 @@ graylog:
     host: graylog.yourdomain.com
 
     ## Please note that tls secret should reside in istio-system namespace
-    ## Leave blanc for disabling TLS
+    ## leave blanc for disabling TLS
     tlsSecretName: ""
 
   ## Configure resource requests and limits
@@ -532,8 +533,8 @@ graylog:
     #  curl -v -u "admin:$GRAYLOG_PASSWORD_SECRET" -X PUT --header 'Content-Type: application/json' --header 'X-Requested-By: localhost' --data-binary "${json}" http://graylog-master:9000/api/plugins/org.graylog.plugins.auth.sso/config
 
     ## Additional environment variables to be added to Graylog provisioner job
-    env: {}
     ##
+    env: {}
 
     ## Additional environment variables in raw yaml format
     ## - name: POD_IP
