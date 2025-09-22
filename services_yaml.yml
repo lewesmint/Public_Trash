@@ -1,0 +1,23 @@
+  11:deploy-services:
+    desc: "Deploy all services from services/ directory"
+    cmds:
+      - |
+        echo "Deploying all services from services/ directory..."
+        echo "Using images from registry: {{.REGISTRY_IP}}"
+
+        if ls services/*.yaml >/dev/null 2>&1; then
+          echo "Applying all YAML files in services/ directory:"
+          kubectl apply -f services/
+
+          echo "Waiting for all deployments to be ready..."
+          # Convert underscore service names to hyphen deployment names
+          DEPLOYMENT_SERVICES=$(echo "{{.SERVICES}}" | sed 's/_/-/g' | tr ',' ' ')
+          for service in $DEPLOYMENT_SERVICES; do
+            echo "Waiting for $service deployment..."
+            kubectl wait --for=condition=available --timeout=300s deployment/$service -n {{.NAMESPACE}} || echo "WARNING: $service deployment timeout"
+          done
+
+          echo "Service deployment complete"
+        else
+          echo "No YAML files found in services/ directory"
+        fi
