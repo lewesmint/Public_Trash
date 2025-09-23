@@ -1,0 +1,289 @@
+version: "3"
+
+vars:
+  # Real VS Code paths (commented out for testing)
+  # VSC_DIR: "$HOME/.config/Code/User"
+  # VSC_SETTINGS: "$HOME/.config/Code/User/settings.json"
+
+  # Fake test paths
+  VSC_DIR: "./fake_vscode"
+  VSC_SETTINGS: "./fake_vscode/settings.json"
+  VSC_FRAGMENT: |
+    {
+      "files": {
+        "autoSave": "afterDelay",
+        "autoSaveDelay": 1000,
+        "trimTrailingWhitespace": true
+      },
+      "editor": {
+        "formatOnSave": true,
+        "tabSize": 2,
+        "insertSpaces": true,
+        "wordWrap": "on",
+        "minimap": {
+          "enabled": false,
+          "maxColumn": 120
+        },
+        "rulers": [80, 120],
+        "fontFamily": "Fira Code, Consolas, monospace"
+      },
+      "workbench": {
+        "colorTheme": "Abyss",
+        "startupEditor": "none",
+        "editor": {
+          "enablePreview": false
+        }
+      },
+      "terminal": {
+        "integrated": {
+          "defaultProfile": {
+            "linux": "bash"
+          },
+          "fontSize": 14
+        }
+      },
+      "security": {
+        "workspace": {
+          "trust": {
+            "enabled": false
+          }
+        }
+      },
+      "explorer": {
+        "confirmDelete": false
+      },
+      "git": {
+        "autofetch": true
+      }
+    }
+  TEST_DIR: "."
+
+tasks:
+  configure-vscode:
+    desc: "Configure VS Code settings with backup"
+    cmds:
+      - |
+        #!/usr/bin/env bash
+
+        # Set up paths using variables
+        VSC_DIR="{{.VSC_DIR}}"
+        VSC_SETTINGS="{{.VSC_SETTINGS}}"
+        VSC_BACKUP="$VSC_SETTINGS.backup.$(date +%Y%m%d_%H%M%S)"
+
+        if ! mkdir -p "$VSC_DIR"; then
+          echo "ERROR: Failed to create directory: $VSC_DIR"
+          exit 1
+        fi
+
+        # Create fragment
+        FRAGMENT=$(cat << 'EOF'
+        {{.VSC_FRAGMENT}}
+        EOF
+        )
+
+        if [[ -f "$VSC_SETTINGS" ]]; then
+          echo "Backing up existing settings to: $VSC_BACKUP"
+          if ! cp "$VSC_SETTINGS" "$VSC_BACKUP"; then
+            echo "ERROR: Failed to create backup"
+            exit 1
+          fi
+
+          echo "Merging fragment with existing settings..."
+          if ! echo "$FRAGMENT" | jq --slurpfile existing "$VSC_SETTINGS" '$existing[0] + .' > "$VSC_SETTINGS.tmp"; then
+            echo "ERROR: Failed to merge settings"
+            exit 1
+          fi
+
+          if ! mv "$VSC_SETTINGS.tmp" "$VSC_SETTINGS"; then
+            echo "ERROR: Failed to update settings file"
+            exit 1
+          fi
+        else
+          echo "No existing settings found. Creating new settings file..."
+          if ! echo "$FRAGMENT" | jq '.' > "$VSC_SETTINGS"; then
+            echo "ERROR: Failed to create new settings file"
+            exit 1
+          fi
+        fi
+
+        echo "VS Code settings updated: $VSC_SETTINGS"
+
+  restore-vscode:
+    desc: "Restore VS Code settings from most recent backup"
+    cmds:
+      - |
+        #!/usr/bin/env bash
+
+        VSC_DIR="{{.VSC_DIR}}"
+        VSC_SETTINGS="{{.VSC_SETTINGS}}"
+
+        # Find most recent backup
+        LATEST_BACKUP=$(find "$VSC_DIR" -name "settings.json.backup.*" -type f 2>/dev/null | sort | tail -1)
+
+        if [[ -z "$LATEST_BACKUP" ]]; then
+          echo "No backup found in $VSC_DIR"
+          exit 1
+        fi
+
+        echo "Restoring from: $LATEST_BACKUP"
+        if ! cp "$LATEST_BACKUP" "$VSC_SETTINGS"; then
+          echo "ERROR: Failed to restore settings from backup"
+          exit 1
+        fi
+        echo "Settings restored successfully"
+
+  list-vscode-backups:
+    desc: "List all VS Code settings backups"
+    cmds:
+      - |
+        #!/usr/bin/env bash
+
+        VSC_DIR="{{.VSC_DIR}}"
+
+        echo "VS Code settings backups in $VSC_DIR:"
+        find "$VSC_DIR" -name "settings.json.backup.*" -type f 2>/dev/null | sort | while read -r backup; do
+          timestamp=$(basename "$backup" | sed 's/settings.json.backup.//')
+          size=$(stat -c%s "$backup" 2>/dev/null || echo "unknown")
+          echo "  $backup (${size} bytes, created: $timestamp)"
+        done || echo "No backups found"
+  test-with-existing:
+    desc: "Test merging with existing settings"
+    cmds:
+      - |
+        #!/usr/bin/env bash
+
+        # Set up paths
+        VSC_DIR="{{.VSC_DIR}}"
+        VSC_SETTINGS="{{.VSC_SETTINGS}}"
+        VSC_BACKUP="$VSC_SETTINGS.backup.$(date +%Y%m%d_%H%M%S)"
+
+        # For testing, use local files
+        TEST_SETTINGS="{{.TEST_DIR}}/settings.json"
+        TEST_BACKUP="$TEST_SETTINGS.backup.$(date +%Y%m%d_%H%M%S)"
+
+        # Copy our test existing settings
+        if ! cp "{{.TEST_DIR}}/existing_settings.json" "$TEST_SETTINGS"; then
+          echo "ERROR: Failed to copy test settings"
+          exit 1
+        fi
+        echo "=== Original settings ==="
+        cat "$TEST_SETTINGS" | jq '.'
+
+        # Create fragment file
+        FRAGMENT=$(cat << 'EOF'
+        {{.VSC_FRAGMENT}}
+        EOF
+        )
+
+        echo -e "\n=== Fragment to merge ==="
+        echo "$FRAGMENT" | jq '.'
+
+        if [[ -f "$TEST_SETTINGS" ]]; then
+          echo -e "\n=== Creating backup ==="
+          if ! cp "$TEST_SETTINGS" "$TEST_BACKUP"; then
+            echo "ERROR: Failed to create backup"
+            exit 1
+          fi
+          echo "Backup created: $TEST_BACKUP"
+
+          echo -e "\n=== Merging... ==="
+          if ! echo "$FRAGMENT" | jq --slurpfile existing "$TEST_SETTINGS" '$existing[0] + .' > "$TEST_SETTINGS.tmp"; then
+            echo "ERROR: Failed to merge settings"
+            exit 1
+          fi
+
+          if ! mv "$TEST_SETTINGS.tmp" "$TEST_SETTINGS"; then
+            echo "ERROR: Failed to update test settings"
+            exit 1
+          fi
+        fi
+
+        echo -e "\n=== Final merged settings ==="
+        cat "$TEST_SETTINGS" | jq '.'
+
+  test-no-existing:
+    desc: "Test creating new settings file"
+    cmds:
+      - |
+        #!/usr/bin/env bash
+
+        VSC_SETTINGS="{{.TEST_DIR}}/settings_new.json"
+
+        # Make sure no existing file
+        rm -f "$VSC_SETTINGS"
+
+        # Create fragment file
+        FRAGMENT=$(cat << 'EOF'
+        {{.VSC_FRAGMENT}}
+        EOF
+        )
+
+        echo "=== Fragment to use as new settings ==="
+        echo "$FRAGMENT" | jq '.'
+
+        if [[ -f "$VSC_SETTINGS" ]]; then
+          echo "ERROR: File should not exist for this test"
+          exit 1
+        else
+          echo -e "\n=== Creating new settings file ==="
+          if ! echo "$FRAGMENT" | jq '.' > "$VSC_SETTINGS"; then
+            echo "ERROR: Failed to create new settings file"
+            exit 1
+          fi
+        fi
+
+        echo -e "\n=== New settings file created ==="
+        cat "$VSC_SETTINGS" | jq '.'
+
+  test-restore:
+    desc: "Test restore functionality"
+    cmds:
+      - |
+        #!/usr/bin/env bash
+
+        VSC_SETTINGS="{{.TEST_DIR}}/settings.json"
+
+        echo "=== Current settings ==="
+        if [[ -f "$VSC_SETTINGS" ]]; then
+          cat "$VSC_SETTINGS" | jq '.'
+        else
+          echo "No settings file found"
+        fi
+
+        # Find most recent backup
+        LATEST_BACKUP=$(find "{{.TEST_DIR}}" -name "settings.json.backup.*" -type f 2>/dev/null | sort | tail -1)
+
+        if [[ -z "$LATEST_BACKUP" ]]; then
+          echo "No backup found"
+          exit 1
+        fi
+
+        echo -e "\n=== Restoring from backup ==="
+        echo "Backup file: $LATEST_BACKUP"
+        cat "$LATEST_BACKUP" | jq '.'
+
+        if ! cp "$LATEST_BACKUP" "$VSC_SETTINGS"; then
+          echo "ERROR: Failed to restore from backup"
+          exit 1
+        fi
+
+        echo -e "\n=== Settings after restore ==="
+        cat "$VSC_SETTINGS" | jq '.'
+
+  list-backups:
+    desc: "List all test backups"
+    cmds:
+      - |
+        #!/usr/bin/env bash
+        
+        echo "=== Test backups ==="
+        find "{{.TEST_DIR}}" -name "settings.json.backup.*" -type f 2>/dev/null | sort | while read -r backup; do
+          timestamp=$(basename "$backup" | sed 's/settings.json.backup.//')
+          size=$(stat -c%s "$backup" 2>/dev/null || echo "unknown")
+          echo "  $backup (${size} bytes, created: $timestamp)"
+        done || echo "No backups found"
+
+  clean:
+    desc: "Clean up test files"
+    cmds:
+      - rm -f {{.TEST_DIR}}/settings*.json
