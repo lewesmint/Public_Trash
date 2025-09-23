@@ -8,8 +8,8 @@ tasks:
         # Vars
         KEYRING="/etc/apt/keyrings/microsoft.gpg"
         LISTFILE="/etc/apt/sources.list.d/vscode.list"
-        PKG="code"
-        REPO_LINE="deb [arch=amd64,arm64,armhf signed-by=$KEYRING] https://packages.microsoft.com/repos/code stable main"
+        URL="https://packages.microsoft.com/repos/code"
+        REPO_LINE="deb [arch=amd64,arm64,armhf signed-by=$KEYRING] $URL stable main"
 
         echo ">>> Installing prerequisites..."
         sudo apt-get update -y
@@ -22,54 +22,61 @@ tasks:
         if [ ! -f "$KEYRING" ]; then
           wget -qO- https://packages.microsoft.com/keys/microsoft.asc \
             | gpg --dearmor \
-            | sudo tee "$KEYRING" > /dev/null
+            | sudo tee "$KEYRING" >/dev/null
           sudo chmod 0644 "$KEYRING"
         fi
 
-        echo ">>> Writing repository definition..."
-        echo "$REPO_LINE" | sudo tee "$LISTFILE" > /dev/null
+        echo ">>> Removing any old/conflicting repo lines..."
+        for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+          [ -f "$f" ] || continue
+          sudo sed -i "\|$URL|d" "$f" || true
+        done
+        sudo rm -f /etc/apt/sources.list.d/vscode.list /etc/apt/sources.list.d/vscode.list.save || true
 
-        echo ">>> Installing VS Code..."
+        echo ">>> Writing canonical repo line..."
+        echo "$REPO_LINE" | sudo tee "$LISTFILE" >/dev/null
+
+        echo ">>> Installing/updating VS Code..."
         sudo apt-get update -y
-        sudo apt-get install -y "$PKG"
+        sudo apt-get install -y code
 
-        echo "✔ VS Code installed (or already up-to-date)."
+        echo "✔ VS Code installed (idempotent)."
 
   vscode:uninstall:
-    desc: "Uninstall Visual Studio Code and remove its repo/key (idempotent)"
+    desc: "Uninstall VS Code and scrub all repo entries"
     cmds:
       - |
-        # Vars
         KEYRING="/etc/apt/keyrings/microsoft.gpg"
-        LISTFILE="/etc/apt/sources.list.d/vscode.list"
-        PKG="code"
+        URL="https://packages.microsoft.com/repos/code"
 
-        echo ">>> Purging VS Code package (if installed)..."
-        sudo apt-get purge -y "$PKG" || true
+        echo ">>> Purging VS Code package..."
+        sudo apt-get purge -y code || true
         sudo apt-get autoremove -y || true
 
-        echo ">>> Removing repository definition..."
-        sudo rm -f "$LISTFILE" "$LISTFILE.save" || true
+        echo ">>> Removing repo entries..."
+        for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+          [ -f "$f" ] || continue
+          sudo sed -i "\|$URL|d" "$f" || true
+        done
+        sudo rm -f /etc/apt/sources.list.d/vscode.list /etc/apt/sources.list.d/vscode.list.save || true
 
-        echo ">>> Removing Microsoft keyring..."
-        # Comment out this line if you use other Microsoft repos
+        echo ">>> Removing Microsoft keyring (optional)..."
         sudo rm -f "$KEYRING" || true
 
         echo ">>> Refreshing APT indices..."
         sudo apt-get update -y || true
 
-        echo "✔ VS Code uninstalled and repo/key removed."
+        echo "✔ VS Code uninstalled and repo scrubbed."
 
   vscode:status:
-    desc: "Check if Visual Studio Code is installed and repo present"
+    desc: "Check if VS Code is installed and repo present"
     cmds:
       - |
         KEYRING="/etc/apt/keyrings/microsoft.gpg"
         LISTFILE="/etc/apt/sources.list.d/vscode.list"
-        PKG="code"
 
         echo "=== VS Code Status ==="
-        if dpkg -s "$PKG" >/dev/null 2>&1; then
+        if dpkg -s code >/dev/null 2>&1; then
           echo "✔ VS Code installed: $(code --version | head -n1)"
         else
           echo "✗ VS Code not installed"
@@ -79,7 +86,7 @@ tasks:
           echo "✔ Repo file exists at $LISTFILE"
           grep -q "packages.microsoft.com/repos/code" "$LISTFILE" \
             && echo "   Repo line is valid" \
-            || echo "   Repo file exists but looks unusual"
+            || echo "   Repo line looks unusual"
         else
           echo "✗ Repo file not present"
         fi
@@ -89,3 +96,10 @@ tasks:
         else
           echo "✗ Keyring missing"
         fi
+
+  vscode:grep:
+    desc: "List any apt source files still containing VS Code repo lines"
+    cmds:
+      - |
+        grep -R --line-number -E 'packages\.microsoft\.com/.*/code' \
+          /etc/apt/sources.list /etc/apt/sources.list.d /etc/apt/sources.list.d/*.sources || true
