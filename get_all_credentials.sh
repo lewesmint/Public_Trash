@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 
 # Get credentials for RabbitMQ and Graylog services
-# Usage: ./get-all-credentials.sh [rabbitmq-namespace] [graylog-namespace]
+# Usage: ./get-all-credentials.sh [rabbitmq-namespace] [graylog-namespace] [keycloak-namespace]
 
 RABBITMQ_NAMESPACE="${1:-nevada}"
 GRAYLOG_NAMESPACE="${2:-graylog}"
+KEYCLOAK_NAMESPACE="${3:-nevada}"
 
 echo "=== Service Credentials ==="
 echo ""
 
-echo "🐰 RabbitMQ (namespace: $RABBITMQ_NAMESPACE)"
+echo "RabbitMQ (namespace: $RABBITMQ_NAMESPACE)"
 echo "----------------------------------------"
 
 # Get RabbitMQ username from StatefulSet environment variables
@@ -27,7 +28,7 @@ echo "Username: $RABBITMQ_USERNAME"
 echo "Password: $RABBITMQ_PASSWORD"
 echo ""
 
-echo "📊 Graylog (namespace: $GRAYLOG_NAMESPACE)"
+echo "Graylog (namespace: $GRAYLOG_NAMESPACE)"
 echo "----------------------------------------"
 
 # Get Graylog username from Secret
@@ -44,21 +45,19 @@ echo "Username: $GRAYLOG_USERNAME"
 echo "Password: $GRAYLOG_PASSWORD"
 echo ""
 
-echo "🔐 Keycloak (namespace: $RABBITMQ_NAMESPACE)"
+echo "Keycloak (namespace: $KEYCLOAK_NAMESPACE)"
 echo "----------------------------------------"
 
-# Get Keycloak username from Secret
-KEYCLOAK_USERNAME=$(kubectl get secret -n "$RABBITMQ_NAMESPACE" keycloak \
-  -o jsonpath='{.data.admin-user}' | \
-  base64 -d 2>/dev/null || echo "admin")
+# Keycloak username is hardcoded as admin
+KEYCLOAK_USERNAME="admin"
 
 # Get Keycloak password from Secret
-KEYCLOAK_PASSWORD=$(kubectl get secret -n "$RABBITMQ_NAMESPACE" keycloak \
+KEYCLOAK_PASSWORD=$(kubectl get secret -n "$KEYCLOAK_NAMESPACE" keycloak \
   -o jsonpath='{.data.admin-password}' | \
   base64 -d 2>/dev/null || echo "Check secret manually")
 
-# Get Keycloak PostgreSQL password
-KEYCLOAK_DB_PASSWORD=$(kubectl get secret -n "$RABBITMQ_NAMESPACE" keycloak-postgresql \
+# Get Keycloak PostgreSQL password (from the main postgresql secret)
+KEYCLOAK_DB_PASSWORD=$(kubectl get secret -n "$KEYCLOAK_NAMESPACE" postgresql \
   -o jsonpath='{.data.postgres-password}' | \
   base64 -d 2>/dev/null || echo "Check secret manually")
 
@@ -67,7 +66,7 @@ echo "Password: $KEYCLOAK_PASSWORD"
 echo "Database Password: $KEYCLOAK_DB_PASSWORD"
 echo ""
 
-echo "🔗 Access Information"
+echo "Access Information"
 echo "----------------------------------------"
 echo "RabbitMQ Management UI:"
 echo "  kubectl port-forward -n $RABBITMQ_NAMESPACE svc/rabbitmq 15672:15672"
