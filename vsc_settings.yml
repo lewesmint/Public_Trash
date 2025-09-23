@@ -1,0 +1,113 @@
+version: "3"
+
+tasks:
+  vscode:settings:apply:
+    desc: "Apply VS Code settings fragment (deep merge, idempotent)"
+    cmds:
+      - |
+        VSC_DIR="$HOME/.config/Code/User"
+        VSC_SETTINGS="$VSC_DIR/settings.json"
+        VSC_FRAGMENT="$VSC_DIR/.configure-vscode.fragment.json"
+
+        echo ">>> Ensuring settings dir exists..."
+        mkdir -p "$VSC_DIR"
+
+        echo ">>> Writing settings fragment..."
+        cat > "$VSC_FRAGMENT" <<'EOF'
+        {
+          "files.autoSave": "afterDelay",
+          "editor": {
+            "formatOnSave": true,
+            "tabSize": 2,
+            "minimap": { "enabled": false }
+          },
+          "workbench": {
+            "colorTheme": "Abyss",
+            "startupEditor": "none"
+          },
+          "terminal": {
+            "integrated": { "defaultProfile.linux": "bash" }
+          },
+          "security.workspace.trust.enabled": false,
+          "explorer.confirmDelete": false,
+          "git.autofetch": true,
+          "files.autoSaveDelay": 1000,
+          "editor.wordWrap": "on"
+        }
+        EOF
+
+        echo ">>> Deep merging fragment into settings.json..."
+        if [ -f "$VSC_SETTINGS" ]; then
+          jq -s '
+            def rmerge($a; $b):
+              if ( ($a|type) == "object" and ($b|type) == "object" ) then
+                reduce ($b|keys_unsorted[]) as $k ($a; .[$k] = rmerge($a[$k]; $b[$k]))
+              else
+                $b
+              end;
+            rmerge(.[0]; .[1])
+          ' "$VSC_SETTINGS" "$VSC_FRAGMENT" > "$VSC_SETTINGS.tmp" && mv "$VSC_SETTINGS.tmp" "$VSC_SETTINGS"
+        else
+          # No existing settings, just use the fragment
+          cp "$VSC_FRAGMENT" "$VSC_SETTINGS"
+        fi
+
+        echo "✔ VS Code settings updated (deep merge)."
+
+  vscode:settings:undo:
+    desc: "Remove only the keys present in the fragment (handles nested keys)"
+    cmds:
+      - |
+        VSC_DIR="$HOME/.config/Code/User"
+        VSC_SETTINGS="$VSC_DIR/settings.json"
+        VSC_FRAGMENT="$VSC_DIR/.configure-vscode.fragment.json"
+
+        if [ ! -f "$VSC_SETTINGS" ]; then
+          echo "No settings.json found, nothing to undo."
+          exit 0
+        fi
+        if [ ! -f "$VSC_FRAGMENT" ]; then
+          echo "No fragment file found, nothing to undo."
+          exit 0
+        fi
+
+        echo ">>> Deleting fragment keys from settings.json (nested aware)..."
+        # Delete all scalar paths present in the fragment from the settings
+        jq -s '
+          # .[0] is the current settings, .[1] is the fragment
+          reduce (.[1] | paths(scalars)) as $p (.[0]; delpath($p))
+        ' "$VSC_SETTINGS" "$VSC_FRAGMENT" > "$VSC_SETTINGS.tmp" && mv "$VSC_SETTINGS.tmp" "$VSC_SETTINGS"
+
+        echo "✔ Fragment keys removed. Unrelated settings left intact."
+
+  vscode:settings:status:
+    desc: "Show which fragment keys are currently set in settings.json"
+    cmds:
+      - |
+        VSC_DIR="$HOME/.config/Code/User"
+        VSC_SETTINGS="$VSC_DIR/settings.json"
+        VSC_FRAGMENT="$VSC_DIR/.configure-vscode.fragment.json"
+
+        if [ ! -f "$VSC_SETTINGS" ] || [ ! -f "$VSC_FRAGMENT" ]; then
+          echo "settings.json or fragment missing."
+          exit 0
+        fi
+
+        echo ">>> Keys from fragment present in settings.json:"
+        # For each scalar path in fragment, show current value in settings if present
+        jq -s -r '
+          def pstr($p): ($p | map(
+            if type == "number" then
+              "[" + (tostring) + "]"
+            elif type == "string" then
+              "." + .
+            else
+              "." + (tostring)
+            end
+          ) | join(""));
+          (.[1] | paths(scalars)) as $p
+          | (.[0] | getpath($p)? ) as $v
+          | if $v == null then empty
+            else (pstr($p) + " = " + ( $v | tojson ))
+            end
+        ' "$VSC_SETTINGS" "$VSC_FRAGMENT" || true
