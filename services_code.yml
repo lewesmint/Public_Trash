@@ -28,7 +28,7 @@ tasks:
     cmds:
       - echo "Registry access is configured via minikube --insecure-registry flag"
       - echo "Minikube should be started with insecure-registry={{.REGISTRY_IP}}"
-      - echo "Deployment files should use IP address {{.REGISTRY_IP}}/service-name:tag"
+      - echo "Deployment files should use IP address {{.REGISTRY_IP}}/{{.NAMESPACE}}/service-name:tag"
       - echo "Registry access setup completed"
 
   06-deploy-all:
@@ -138,8 +138,8 @@ tasks:
 
         echo "=== SERVICE IMAGES ==="
         for service in $(echo "{{.SERVICES}}" | tr ',' ' '); do
-          echo "Checking $service tags..."
-          curl -s http://{{.REGISTRY_IP}}/v2/$service/tags/list | jq -r '.tags[]?' 2>/dev/null || curl -s http://{{.REGISTRY_IP}}/v2/$service/tags/list
+          echo "Checking {{.NAMESPACE}}/$service tags..."
+          curl -s http://{{.REGISTRY_IP}}/v2/{{.NAMESPACE}}/$service/tags/list | jq -r '.tags[]?' 2>/dev/null || curl -s http://{{.REGISTRY_IP}}/v2/{{.NAMESPACE}}/$service/tags/list
           echo ""
         done
 
@@ -163,16 +163,16 @@ tasks:
           echo -n "$service: "
 
           # Check if repository exists
-          if curl -s http://{{.REGISTRY_IP}}/v2/$service/tags/list >/dev/null 2>&1; then
+          if curl -s http://{{.REGISTRY_IP}}/v2/{{.NAMESPACE}}/$service/tags/list >/dev/null 2>&1; then
             # Get tags
-            tags=$(curl -s http://{{.REGISTRY_IP}}/v2/$service/tags/list | jq -r '.tags[]?' 2>/dev/null)
+            tags=$(curl -s http://{{.REGISTRY_IP}}/v2/{{.NAMESPACE}}/$service/tags/list | jq -r '.tags[]?' 2>/dev/null)
             if [ -n "$tags" ]; then
               echo "✓ Available tags: $tags"
 
               # Get timestamp for each tag
               for tag in $tags; do
                 # Get the Date header from the manifest request
-                timestamp=$(curl -s -I "http://{{.REGISTRY_IP}}/v2/$service/manifests/$tag" \
+                timestamp=$(curl -s -I "http://{{.REGISTRY_IP}}/v2/{{.NAMESPACE}}/$service/manifests/$tag" \
                   -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
                   | grep -i "^date:" | cut -d' ' -f2- | tr -d '\r')
 
