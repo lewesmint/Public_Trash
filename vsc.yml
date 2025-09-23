@@ -1,0 +1,91 @@
+version: "3"
+
+tasks:
+  vscode:install:
+    desc: "Install Visual Studio Code (idempotent)"
+    cmds:
+      - |
+        # Vars
+        KEYRING="/etc/apt/keyrings/microsoft.gpg"
+        LISTFILE="/etc/apt/sources.list.d/vscode.list"
+        PKG="code"
+        REPO_LINE="deb [arch=amd64,arm64,armhf signed-by=$KEYRING] https://packages.microsoft.com/repos/code stable main"
+
+        echo ">>> Installing prerequisites..."
+        sudo apt-get update -y
+        sudo apt-get install -y wget gpg apt-transport-https
+
+        echo ">>> Ensuring keyrings directory exists..."
+        sudo install -d -m 0755 /etc/apt/keyrings
+
+        echo ">>> Installing Microsoft signing key (if missing)..."
+        if [ ! -f "$KEYRING" ]; then
+          wget -qO- https://packages.microsoft.com/keys/microsoft.asc \
+            | gpg --dearmor \
+            | sudo tee "$KEYRING" > /dev/null
+          sudo chmod 0644 "$KEYRING"
+        fi
+
+        echo ">>> Writing repository definition..."
+        echo "$REPO_LINE" | sudo tee "$LISTFILE" > /dev/null
+
+        echo ">>> Installing VS Code..."
+        sudo apt-get update -y
+        sudo apt-get install -y "$PKG"
+
+        echo "✔ VS Code installed (or already up-to-date)."
+
+  vscode:uninstall:
+    desc: "Uninstall Visual Studio Code and remove its repo/key (idempotent)"
+    cmds:
+      - |
+        # Vars
+        KEYRING="/etc/apt/keyrings/microsoft.gpg"
+        LISTFILE="/etc/apt/sources.list.d/vscode.list"
+        PKG="code"
+
+        echo ">>> Purging VS Code package (if installed)..."
+        sudo apt-get purge -y "$PKG" || true
+        sudo apt-get autoremove -y || true
+
+        echo ">>> Removing repository definition..."
+        sudo rm -f "$LISTFILE" "$LISTFILE.save" || true
+
+        echo ">>> Removing Microsoft keyring..."
+        # Comment out this line if you use other Microsoft repos
+        sudo rm -f "$KEYRING" || true
+
+        echo ">>> Refreshing APT indices..."
+        sudo apt-get update -y || true
+
+        echo "✔ VS Code uninstalled and repo/key removed."
+
+  vscode:status:
+    desc: "Check if Visual Studio Code is installed and repo present"
+    cmds:
+      - |
+        KEYRING="/etc/apt/keyrings/microsoft.gpg"
+        LISTFILE="/etc/apt/sources.list.d/vscode.list"
+        PKG="code"
+
+        echo "=== VS Code Status ==="
+        if dpkg -s "$PKG" >/dev/null 2>&1; then
+          echo "✔ VS Code installed: $(code --version | head -n1)"
+        else
+          echo "✗ VS Code not installed"
+        fi
+
+        if [ -f "$LISTFILE" ]; then
+          echo "✔ Repo file exists at $LISTFILE"
+          grep -q "packages.microsoft.com/repos/code" "$LISTFILE" \
+            && echo "   Repo line is valid" \
+            || echo "   Repo file exists but looks unusual"
+        else
+          echo "✗ Repo file not present"
+        fi
+
+        if [ -f "$KEYRING" ]; then
+          echo "✔ Keyring present at $KEYRING"
+        else
+          echo "✗ Keyring missing"
+        fi
