@@ -176,10 +176,18 @@ tasks:
           SERVICES_LIST="{{.SERVICES}}"
           for service in $(echo $SERVICES_LIST | tr ',' ' '); do
             echo "Dropping database and user: $service"
-            kubectl exec -n {{.NAMESPACE}} "$POSTGRES_POD" -- env PGPASSWORD="$POSTGRES_PASSWORD" psql -U postgres -c "
-            DROP DATABASE IF EXISTS $service;
-            DROP USER IF EXISTS $service;
-            "
+
+            # Drop database first (must be separate command)
+            kubectl exec -n {{.NAMESPACE}} "$POSTGRES_POD" -- \
+              env PGPASSWORD="$POSTGRES_PASSWORD" \
+              psql -U postgres -d postgres -c "DROP DATABASE IF EXISTS $service;"
+
+            # Drop user second (separate command)
+            kubectl exec -n {{.NAMESPACE}} "$POSTGRES_POD" -- \
+              env PGPASSWORD="$POSTGRES_PASSWORD" \
+              psql -U postgres -d postgres -c "DROP USER IF EXISTS $service;"
+
+            echo "Dropped $service"
           done
           echo "All databases and users dropped"
         else
