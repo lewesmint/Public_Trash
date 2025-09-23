@@ -1,0 +1,187 @@
+version: '3'
+
+vars:
+  NAMESPACE: "nevada"
+  POSTGRES_SERVICE: "postgresql"
+  # Array of service names to create
+  SERVICES: >
+    aircraft_engine_service, clown_service,
+    huzzah_service, value_added_service
+
+tasks:
+  default:
+    desc: "Show available database setup tasks"
+    cmds:
+      - task --list
+
+  01:create-all-databases:
+    desc: "Create all service databases and users"
+    cmds:
+      - |
+        echo "Creating all services: {{.SERVICES}}"
+
+        # Check if PostgreSQL is running
+        if ! kubectl get pod -n {{.NAMESPACE}} -l app.kubernetes.io/name=postgresql --field-selector=status.phase=Running >/dev/null 2>&1; then
+          echo "Error: PostgreSQL pod is not running in {{.NAMESPACE}} namespace"
+          exit 1
+        fi
+
+        # Get PostgreSQL password
+        POSTGRES_PASSWORD=$(kubectl get secret --namespace {{.NAMESPACE}} {{.POSTGRES_SERVICE}} -o jsonpath="{.data.postgres-password}" | base64 -d)
+
+        if [ -z "$POSTGRES_PASSWORD" ]; then
+          echo "Error: Could not retrieve PostgreSQL password"
+          exit 1
+        fi
+
+        # Get PostgreSQL pod name
+        POSTGRES_POD=$(kubectl get pods -n {{.NAMESPACE}} -l app.kubernetes.io/name=postgresql -o jsonpath="{.items[0].metadata.name}")
+
+        if [ -z "$POSTGRES_POD" ]; then
+          echo "Error: Could not find PostgreSQL pod"
+          exit 1
+        fi
+
+        echo "Using PostgreSQL pod: $POSTGRES_POD"
+
+        # Process each service
+        SERVICES_LIST="{{.SERVICES}}"
+        for service in $(echo $SERVICES_LIST | tr ',' ' '); do
+          echo "Processing service: $service"
+
+          # Create user if it doesn't exist (idempotent)
+          if kubectl exec -n {{.NAMESPACE}} "$POSTGRES_POD" -- \
+             env PGPASSWORD="$POSTGRES_PASSWORD" \
+             psql -U postgres -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='$service'" | grep -q 1; then
+            echo "User $service already exists"
+          else
+            kubectl exec -n {{.NAMESPACE}} "$POSTGRES_POD" -- \
+              env PGPASSWORD="$POSTGRES_PASSWORD" \
+              psql -U postgres -d postgres -c "CREATE USER $service WITH PASSWORD '$service';"
+            echo "User $service created"
+          fi
+
+          # Create database if it doesn't exist (idempotent)
+          if kubectl exec -n {{.NAMESPACE}} "$POSTGRES_POD" -- \
+             env PGPASSWORD="$POSTGRES_PASSWORD" \
+             psql -U postgres -d postgres -lqt | cut -d \| -f 1 | grep -qw "$service"; then
+            echo "Database $service already exists"
+          else
+            kubectl exec -n {{.NAMESPACE}} "$POSTGRES_POD" -- \
+              env PGPASSWORD="$POSTGRES_PASSWORD" \
+              psql -U postgres -d postgres -c "CREATE DATABASE $service;"
+            echo "Database $service created"
+          fi
+
+          # Set database owner
+          kubectl exec -n {{.NAMESPACE}} "$POSTGRES_POD" -- \
+            env PGPASSWORD="$POSTGRES_PASSWORD" \
+            psql -U postgres -d postgres -c "ALTER DATABASE $service OWNER TO $service;"
+
+          echo "Service $service setup complete"
+        done
+
+        echo "All databases created successfully!"
+
+  02:verify-all-databases:
+    desc: "Verify all database and user setup"
+    cmds:
+      - |
+        echo "Verifying all databases: {{.SERVICES}}"
+
+        # Get PostgreSQL pod name and password
+        POSTGRES_POD=$(kubectl get pods -n {{.NAMESPACE}} -l app.kubernetes.io/name=postgresql -o jsonpath="{.items[0].metadata.name}")
+        POSTGRES_PASSWORD=$(kubectl get secret --namespace {{.NAMESPACE}} {{.POSTGRES_SERVICE}} -o jsonpath="{.data.postgres-password}" | base64 -d)
+
+        if [ -z "$POSTGRES_POD" ] || [ -z "$POSTGRES_PASSWORD" ]; then
+          echo "Error: Could not find PostgreSQL pod or password"
+          exit 1
+        fi
+
+        echo "=== USERS ==="
+        # Convert comma-separated services to SQL IN clause format
+        SERVICES_SQL=$(echo "{{.SERVICES}}" | sed "s/[^,][^,]*/'&'/g")
+        kubectl exec -n {{.NAMESPACE}} "$POSTGRES_POD" -- env PGPASSWORD="$POSTGRES_PASSWORD" psql -U postgres -c "
+        SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname IN ($SERVICES_SQL) ORDER BY rolname;
+        "
+
+        echo "=== DATABASES ==="
+        kubectl exec -n {{.NAMESPACE}} "$POSTGRES_POD" -- env PGPASSWORD="$POSTGRES_PASSWORD" psql -U postgres -c "
+        SELECT d.datname, r.rolname as owner
+        FROM pg_database d
+        JOIN pg_roles r ON d.datdba = r.oid
+        WHERE d.datname IN ($SERVICES_SQL)
+        ORDER BY d.datname;
+        "
+
+  03:test-all-connections:
+    desc: "Test database connections for all services"
+    cmds:
+      - |
+        echo "Testing database connections for all services: {{.SERVICES}}"
+
+        POSTGRES_POD=$(kubectl get pods -n {{.NAMESPACE}} -l app.kubernetes.io/name=postgresql -o jsonpath="{.items[0].metadata.name}")
+
+        if [ -z "$POSTGRES_POD" ]; then
+          echo "Error: Could not find PostgreSQL pod"
+          exit 1
+        fi
+
+        # Process each service
+        SERVICES_LIST="{{.SERVICES}}"
+        for service in $(echo $SERVICES_LIST | tr ',' ' '); do
+          echo "=== Testing $service ==="
+          kubectl exec -n {{.NAMESPACE}} "$POSTGRES_POD" -- env PGPASSWORD="$service" psql -U "$service" -d "$service" -c "
+          SELECT
+            current_user as connected_as,
+            current_database() as database_name;
+          " || echo "ERROR: Failed to connect to $service"
+        done
+
+  10:list-databases:
+    desc: "List all databases in PostgreSQL"
+    cmds:
+      - |
+        POSTGRES_POD=$(kubectl get pods -n {{.NAMESPACE}} -l app.kubernetes.io/name=postgresql -o jsonpath="{.items[0].metadata.name}")
+        if [ -z "$POSTGRES_POD" ]; then
+          echo "Error: Could not find PostgreSQL pod"
+          exit 1
+        fi
+        POSTGRES_PASSWORD=$(kubectl get secret --namespace {{.NAMESPACE}} {{.POSTGRES_SERVICE}} -o jsonpath="{.data.postgres-password}" | base64 -d)
+        kubectl exec -n {{.NAMESPACE}} "$POSTGRES_POD" -- env PGPASSWORD="$POSTGRES_PASSWORD" psql -U postgres -c "\l"
+
+  11:list-users:
+    desc: "11: List all users in PostgreSQL"
+    cmds:
+      - |
+        POSTGRES_POD=$(kubectl get pods -n {{.NAMESPACE}} -l app.kubernetes.io/name=postgresql -o jsonpath="{.items[0].metadata.name}")
+        if [ -z "$POSTGRES_POD" ]; then
+          echo "Error: Could not find PostgreSQL pod"
+          exit 1
+        fi
+        POSTGRES_PASSWORD=$(kubectl get secret --namespace {{.NAMESPACE}} {{.POSTGRES_SERVICE}} -o jsonpath="{.data.postgres-password}" | base64 -d)
+        kubectl exec -n {{.NAMESPACE}} "$POSTGRES_POD" -- env PGPASSWORD="$POSTGRES_PASSWORD" psql -U postgres -c "\du"
+
+  90:drop-all-databases:
+    desc: "Drop all databases and users - DESTRUCTIVE"
+    cmds:
+      - |
+        echo "WARNING: This will DROP all databases and users: {{.SERVICES}}"
+        read -p "Are you sure? Type 'yes' to continue: " confirm
+        if [ "$confirm" = "yes" ]; then
+          POSTGRES_POD=$(kubectl get pods -n {{.NAMESPACE}} -l app.kubernetes.io/name=postgresql -o jsonpath="{.items[0].metadata.name}")
+          POSTGRES_PASSWORD=$(kubectl get secret --namespace {{.NAMESPACE}} {{.POSTGRES_SERVICE}} -o jsonpath="{.data.postgres-password}" | base64 -d)
+
+          # Process each service
+          SERVICES_LIST="{{.SERVICES}}"
+          for service in $(echo $SERVICES_LIST | tr ',' ' '); do
+            echo "Dropping database and user: $service"
+            kubectl exec -n {{.NAMESPACE}} "$POSTGRES_POD" -- env PGPASSWORD="$POSTGRES_PASSWORD" psql -U postgres -c "
+            DROP DATABASE IF EXISTS $service;
+            DROP USER IF EXISTS $service;
+            "
+          done
+          echo "All databases and users dropped"
+        else
+          echo "Operation cancelled"
+        fi
