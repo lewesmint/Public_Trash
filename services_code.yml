@@ -1,0 +1,330 @@
+version: '3'
+
+vars:
+  NAMESPACE: nevada
+  REGISTRY_IP: "192.168.1.2:5000"
+  SERVICES: >
+    aircraft-engine-service
+    clown-service
+    huzzah-service
+    value-added-service
+tasks:
+  default:
+    desc: "Show available Nevada Services Code tasks"
+    cmds:
+      - task --list
+
+  # 01-build-all:
+  #   desc: "01: Build and push container images (Jib runs automatically)"
+  #   cmds:
+  #     - echo "Building and pushing container images..."
+  #     - |
+  #      echo "Registry: {{.REGISTRY_IP}} (Jib configured in POM)"
+  #     - mvn clean install -DskipTests
+  #     - echo "All container images built and pushed successfully"
+
+  05-setup-registry-access:
+    desc: "05: Setup minikube to access the registry"
+    cmds:
+      - echo "Registry access is configured via minikube --insecure-registry flag"
+      - echo "Minikube should be started with insecure-registry={{.REGISTRY_IP}}"
+      - echo "Deployment files should use IP address {{.REGISTRY_IP}}/service-name:tag"
+      - echo "Registry access setup completed"
+
+  06-deploy-all:
+    desc: "06: Deploy all services to Kubernetes"
+    deps: [05-setup-registry-access]
+    cmds:
+      - echo "Deploying all services to Kubernetes..."
+      - |
+        # Convert services to bash array
+        readarray -t SERVICES_ARRAY <<< "{{.SERVICES}}"
+        for service in "${SERVICES_ARRAY[@]}"; do
+          # Skip empty lines
+          [[ -z "$service" ]] && continue
+          echo "Deploying $service..."
+          cd $service
+          if [ -f k8s/deployment.yaml ]; then
+            kubectl apply -f k8s/deployment.yaml
+          else
+            echo "WARNING: No k8s/deployment.yaml found for $service"
+          fi
+          cd ..
+        done
+      - echo "Waiting for all deployments to be ready..."
+      - |
+        for service in $(echo "{{.SERVICES}}" | tr ',' ' '); do
+          echo "Waiting for $service deployment..."
+          kubectl wait --for=condition=available --timeout=300s deployment/$service -n {{.NAMESPACE}} || echo "WARNING: $service deployment timeout"
+        done
+      - echo "All services deployed successfully"
+
+  07-build-and-deploy-all:
+    desc: "07: Complete build and deploy process for all services"
+    cmds:
+      - echo "Building and deploying all Nevada services..."
+      - task: 06-deploy-all
+      - task: 10-status-all
+      - task: 11-endpoints-all
+
+  10-status-all:
+    desc: "10: Show status of all services"
+    cmds:
+      - echo "Nevada Services Status:"
+      - kubectl get pods -n {{.NAMESPACE}} -l app.kubernetes.io/part-of=nevada-services
+      - echo ""
+      - kubectl get svc -n {{.NAMESPACE}} -l app.kubernetes.io/part-of=nevada-services
+
+  11-endpoints-all:
+    desc: "11: Show endpoints for all services"
+    cmds:
+      - echo "Nevada Services Endpoints:"
+      - |
+        for service in $(echo "{{.SERVICES}}" | tr ',' ' '); do
+          service_name=$(echo $service | sed 's/-service$//')
+          echo "  - $service:"
+          echo "    - Health: http://minikube/services/$service_name/$service/health"
+          echo "    - API: http://minikube/services/$service_name/$service"
+          echo "    - Swagger: http://minikube/services/$service_name/swagger-ui"
+        done
+
+  12-test-all:
+    desc: "12: Test all service health endpoints"
+    cmds:
+      - echo "Testing all service health endpoints..."
+      - |
+        for service in $(echo "{{.SERVICES}}" | tr ',' ' '); do
+          service_name=$(echo $service | sed 's/-service$//')
+          echo "Testing $service health endpoint..."
+          curl -f http://minikube/services/$service_name/$service/health || echo "ERROR: $service health check failed"
+        done
+      - echo "Health checks completed"
+
+  13-start-registry:
+    desc: "13: Start local Docker registry"
+    cmds:
+      - echo "Starting local Docker registry on {{.REGISTRY_IP}}..."
+      - |
+        # Check if registry is already running
+        if curl -s http://{{.REGISTRY_IP}}/v2/ >/dev/null 2>&1; then
+          echo "Registry already running at {{.REGISTRY_IP}}"
+        else
+          echo "Starting new registry container..."
+          docker run -d -p 5000:5000 --name registry \
+            --restart=always \
+            -v registry-data:/var/lib/registry \
+            registry:2
+
+          # Wait for registry to be ready
+          echo "Waiting for registry to be ready..."
+          for i in {1..10}; do
+            if curl -s http://{{.REGISTRY_IP}}/v2/ >/dev/null 2>&1; then
+              echo "Registry is ready!"
+              break
+            fi
+            echo "Waiting... ($i/10)"
+            sleep 2
+          done
+        fi
+
+  14-check-registry:
+    desc: "14: Check what's in the container registry"
+    cmds:
+      - echo "Checking registry contents at {{.REGISTRY_IP}}..."
+      - |
+        echo "=== ALL REPOSITORIES ==="
+        curl -s http://{{.REGISTRY_IP}}/v2/_catalog | jq -r '.repositories[]?' 2>/dev/null || curl -s http://{{.REGISTRY_IP}}/v2/_catalog
+        echo ""
+
+        echo "=== SERVICE IMAGES ==="
+        for service in $(echo "{{.SERVICES}}" | tr ',' ' '); do
+          echo "Checking $service tags..."
+          curl -s http://{{.REGISTRY_IP}}/v2/$service/tags/list | jq -r '.tags[]?' 2>/dev/null || curl -s http://{{.REGISTRY_IP}}/v2/$service/tags/list
+          echo ""
+        done
+
+  15-registry-status:
+    desc: "15: Show registry status for all Nevada services"
+    cmds:
+      - echo "=== REGISTRY STATUS FOR NEVADA SERVICES ==="
+      - |
+        # Check if registry is running
+        if curl -s http://{{.REGISTRY_IP}}/v2/ >/dev/null 2>&1; then
+          echo "✓ Registry: Running at {{.REGISTRY_IP}}"
+        else
+          echo "✗ Registry: Not running at {{.REGISTRY_IP}}"
+          echo "  Run 'task 13-start-registry' to start it"
+          exit 1
+        fi
+        echo ""
+
+        echo "=== SERVICE IMAGE STATUS WITH TIMESTAMPS ==="
+        for service in $(echo "{{.SERVICES}}" | tr ',' ' '); do
+          echo -n "$service: "
+
+          # Check if repository exists
+          if curl -s http://{{.REGISTRY_IP}}/v2/$service/tags/list >/dev/null 2>&1; then
+            # Get tags
+            tags=$(curl -s http://{{.REGISTRY_IP}}/v2/$service/tags/list | jq -r '.tags[]?' 2>/dev/null)
+            if [ -n "$tags" ]; then
+              echo "✓ Available tags: $tags"
+
+              # Get timestamp for each tag
+              for tag in $tags; do
+                # Get the Date header from the manifest request
+                timestamp=$(curl -s -I "http://{{.REGISTRY_IP}}/v2/$service/manifests/$tag" \
+                  -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+                  | grep -i "^date:" | cut -d' ' -f2- | tr -d '\r')
+
+                if [ -n "$timestamp" ]; then
+                  echo "    └─ $tag: Pushed $timestamp"
+                else
+                  echo "    └─ $tag: Timestamp unavailable"
+                fi
+              done
+            else
+              echo "✗ Repository exists but no tags found"
+            fi
+          else
+            echo "✗ No repository found (not built yet)"
+          fi
+          echo ""
+        done
+        echo ""
+
+        echo "=== KUBERNETES DEPLOYMENT STATUS ==="
+        for service in $(echo "{{.SERVICES}}" | tr ',' ' '); do
+          echo -n "$service: "
+          if kubectl get deployment $service -n {{.NAMESPACE}} >/dev/null 2>&1; then
+            status=$(kubectl get deployment $service -n {{.NAMESPACE}} -o jsonpath='{.status.readyReplicas}/{.status.replicas}' 2>/dev/null)
+            image=$(kubectl get deployment $service -n {{.NAMESPACE}} -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
+            echo "✓ Deployed ($status ready) - Image: $image"
+          else
+            echo "✗ Not deployed"
+          fi
+        done
+
+  20-restart-all:
+    desc: "20: Restart all services"
+    cmds:
+      - echo "Restarting all Nevada services..."
+      - |
+        for service in $(echo "{{.SERVICES}}" | tr ',' ' '); do
+          echo "Restarting $service..."
+          kubectl rollout restart deployment/$service -n {{.NAMESPACE}}
+        done
+      - |
+        for service in $(echo "{{.SERVICES}}" | tr ',' ' '); do
+          echo "Waiting for $service restart..."
+          kubectl rollout status deployment/$service -n {{.NAMESPACE}}
+        done
+      - echo "All services restarted successfully"
+
+  16-stop-registry:
+    desc: "16: Stop and remove local Docker registry"
+    cmds:
+      - echo "Stopping local Docker registry..."
+      - |
+        if docker ps | grep -q "registry"; then
+          echo "Stopping registry container..."
+          docker stop registry
+          docker rm registry
+          echo "Registry stopped and removed"
+        else
+          echo "Registry container not running"
+        fi
+
+  17-reset-registry:
+    desc: "17: Reset registry (stop, remove, restart fresh)"
+    cmds:
+      - echo "Resetting Docker registry..."
+      - task: 16-stop-registry
+      - |
+        echo "Removing registry data volume..."
+        docker volume rm registry-data 2>/dev/null || echo "Registry data volume not found"
+      - task: 13-start-registry
+      - echo "Registry reset completed - fresh empty registry running"
+
+  18-clean-registry:
+    desc: "18: Clean registry with before/after status"
+    cmds:
+      - echo "Cleaning registry - restarting with fresh data..."
+      - |
+        echo "=== BEFORE CLEANUP ==="
+        if curl -s http://{{.REGISTRY_IP}}/v2/ >/dev/null 2>&1; then
+          curl -s http://{{.REGISTRY_IP}}/v2/_catalog | jq -r '.repositories[]?' 2>/dev/null || curl -s http://{{.REGISTRY_IP}}/v2/_catalog
+        else
+          echo "Registry not running"
+        fi
+        echo ""
+      - task: 17-reset-registry
+      - |
+        echo ""
+        echo "=== AFTER CLEANUP ==="
+        curl -s http://{{.REGISTRY_IP}}/v2/_catalog | jq -r '.repositories[]?' 2>/dev/null || curl -s http://{{.REGISTRY_IP}}/v2/_catalog
+        echo ""
+        echo "Registry cleaned - all images removed"
+
+  90-clean-all:
+    desc: "90: Clean up all deployments and local artifacts"
+    cmds:
+      - echo "Cleaning up all Nevada services..."
+      - |
+        for service in $(echo "{{.SERVICES}}" | tr ',' ' '); do
+          echo "Cleaning $service..."
+          cd $service
+          if [ -f k8s/deployment.yaml ]; then
+            kubectl delete -f k8s/deployment.yaml --ignore-not-found=true
+          fi
+          cd ..
+        done
+      - mvn clean || true
+      - echo "Cleanup completed"
+
+  # Individual service tasks (no numbering - utility tasks)
+  logs:
+    desc: "Show logs for a specific service (usage: task logs SERVICE=<service-name> [FOLLOW=true])"
+    cmds:
+      - |
+        if [ -z "{{.SERVICE}}" ]; then
+          echo "ERROR: SERVICE parameter required."
+          echo "Available services: $(echo "{{.SERVICES}}" | tr '\n' ', ' | sed 's/, $//')"
+          echo "Usage: task logs SERVICE=<service-name> [FOLLOW=true]"
+          echo "  FOLLOW=true  - Stream logs continuously (Ctrl+C to stop)"
+          echo "  FOLLOW=false - Show recent logs and exit (default)"
+          exit 1
+        fi
+
+        if [ "{{.FOLLOW}}" = "true" ]; then
+          echo "Streaming logs for {{.SERVICE}} (Ctrl+C to stop)..."
+          kubectl logs -f deployment/{{.SERVICE}} -n {{.NAMESPACE}}
+        else
+          echo "Recent logs for {{.SERVICE}}:"
+          kubectl logs deployment/{{.SERVICE}} -n {{.NAMESPACE}} --tail=50
+        fi
+
+  restart:
+    desc: "Restart a specific service (usage: task restart SERVICE=<service-name>)"
+    cmds:
+      - |
+        if [ -z "{{.SERVICE}}" ]; then
+          echo "ERROR: SERVICE parameter required."
+          echo "Available services: $(echo "{{.SERVICES}}" | tr '\n' ', ' | sed 's/, $//')"
+          echo "Usage: task restart SERVICE=<service-name>"
+          exit 1
+        fi
+      - echo "Restarting {{.SERVICE}}..."
+      - kubectl rollout restart deployment/{{.SERVICE}} -n {{.NAMESPACE}}
+      - kubectl rollout status deployment/{{.SERVICE}} -n {{.NAMESPACE}}
+      - echo "{{.SERVICE}} restarted successfully"
+
+  dev:
+    desc: "Run a specific service in development mode (usage: task dev SERVICE=aircraft-engine-service)"
+    cmds:
+      - |
+        if [ -z "{{.SERVICE}}" ]; then
+          echo "ERROR: SERVICE parameter required. Usage: task dev SERVICE=aircraft-engine-service"
+          exit 1
+        fi
+      - echo "Starting {{.SERVICE}} in development mode..."
+      - cd {{.SERVICE}} && ./mvnw compile quarkus:dev
