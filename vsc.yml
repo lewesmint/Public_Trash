@@ -1,8 +1,77 @@
 version: "3"
 
 tasks:
+  vscode:cleanup:
+    desc: "Remove old or conflicting VS Code repo entries and keyrings"
+    cmds:
+      - |
+        URL="https://packages.microsoft.com/repos/code"
+        echo ">>> Removing VS Code APT sources…"
+        for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+          [ -f "$f" ] || continue
+          sudo sed -i "\|$URL|d" "$f" || true
+        done
+        sudo rm -f /etc/apt/sources.list.d/vscode.list /etc/apt/sources.list.d/vscode.list.save || true
+
+        echo ">>> Removing Microsoft keyrings (if present)…"
+        sudo rm -f /etc/apt/keyrings/microsoft.gpg || true
+        sudo rm -f /etc/apt/trusted.gpg.d/packages.microsoft.gpg || true
+
+        echo ">>> Refreshing apt indices…"
+        sudo apt-get update -y || true
+
+        echo "✔ Cleanup complete."
+  vscode:install:
+    desc: "Idempotent install of VS Code (keyring + repo)"
+    # If all status checks pass, this task is skipped entirely
+    status:
+      # 1) Tools we need
+      - command -v wget >/dev/null 2>&1
+      - command -v gpg >/dev/null 2>&1
+      # 2) Canonical repo file present with exact line
+      - test -f /etc/apt/sources.list.d/vscode.list
+      - grep -qxF "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/code stable main" /etc/apt/sources.list.d/vscode.list
+      # 3) Keyring exists and is readable
+      - test -r /etc/apt/keyrings/microsoft.gpg
+      # 4) VS Code package installed
+      - dpkg -s code >/dev/null 2>&1
+    cmds:
+      - |
+        echo ">>> Installing prerequisites…"
+        sudo apt-get update -y
+        sudo apt-get install -y wget gpg apt-transport-https
+
+        KEYRING="/etc/apt/keyrings/microsoft.gpg"
+        LISTFILE="/etc/apt/sources.list.d/vscode.list"
+        URL="https://packages.microsoft.com/repos/code"
+        REPO_LINE="deb [arch=amd64,arm64,armhf signed-by=$KEYRING] $URL stable main"
+
+        echo ">>> Ensuring keyrings directory exists…"
+        sudo install -d -m 0755 /etc/apt/keyrings
+
+        echo ">>> Installing Microsoft signing key…"
+        curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+          | gpg --dearmor \
+          | sudo tee "$KEYRING" >/dev/null
+        sudo chmod 0644 "$KEYRING"
+
+        echo ">>> Removing any old or conflicting Code repo lines…"
+        for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+          [ -f "$f" ] || continue
+          sudo sed -i "\|$URL|d" "$f" || true
+        done
+        sudo rm -f /etc/apt/sources.list.d/vscode.list /etc/apt/sources.list.d/vscode.list.save || true
+
+        echo ">>> Writing canonical repo entry…"
+        echo "$REPO_LINE" | sudo tee "$LISTFILE" >/dev/null
+
+        echo ">>> Updating and installing VS Code…"
+        sudo apt-get update -y
+        sudo apt-get install -y code
+
+        echo "✔ VS Code installed or already up to date."
   vscode:verify:
-    desc: "Verify VS Code apt source and keyring are correct"
+    desc: "Verify VS Code apt source, keyring and apt update"
     cmds:
       - |
         KEYRING="/etc/apt/keyrings/microsoft.gpg"
@@ -10,16 +79,10 @@ tasks:
         URL="https://packages.microsoft.com/repos/code"
         CANONICAL="deb [arch=amd64,arm64,armhf signed-by=$KEYRING] $URL stable main"
 
-        echo ">>> Checking repo file exists…"
-        if [ ! -f "$LISTFILE" ]; then
-          echo "✗ $LISTFILE missing"
-          exit 1
-        fi
-
-        echo ">>> Checking for duplicate or stray entries…"
-        COUNT=$(grep -R -E "\s$URL\s" /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null | wc -l)
+        echo ">>> Checking for exactly one Code entry across sources…"
+        COUNT=$(grep -R -E "\s$URL\s" /etc/apt/sources.list /etc/apt/sources.list.d /etc/apt/sources.list.d/*.sources 2>/dev/null | wc -l)
         if [ "$COUNT" -ne 1 ]; then
-          echo "✗ Found $COUNT entries referencing $URL (expected 1). Run: task vscode:cleanup && task vscode:install"
+          echo "✗ Found $COUNT entries referencing $URL (expected 1)."
           grep -R -n -E "\s$URL\s" /etc/apt/sources.list /etc/apt/sources.list.d /etc/apt/sources.list.d/*.sources || true
           exit 1
         fi
@@ -37,15 +100,40 @@ tasks:
 
         echo ">>> Checking keyring presence and perms…"
         if [ -r "$KEYRING" ]; then
-          echo "✓ Keyring present and readable: $KEYRING"
+          echo "✓ Keyring present and readable"
         else
           echo "✗ Keyring missing or unreadable: $KEYRING"
           exit 1
         fi
 
-        echo ">>> Dry-run apt update against the Code repo…"
-        # Limit output to the Code repo line to avoid noise
-        sudo apt-get update -o Dir::Etc::sourcelist="$LISTFILE" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" >/dev/null && \
-          echo "✓ APT can read and verify the repo" || { echo "✗ APT update failed for the Code repo"; exit 1; }
+        echo ">>> Dry-run apt update against Code repo only…"
+        sudo apt-get update \
+          -o Dir::Etc::sourcelist="$LISTFILE" \
+          -o Dir::Etc::sourceparts="-" \
+          -o APT::Get::List-Cleanup="0" >/dev/null \
+          && echo "✓ APT can read and verify the repo" \
+          || { echo "✗ APT update failed for the Code repo"; exit 1; }
 
-        echo "✔ VS Code source looks good."
+        echo "✔ Verification passed."
+  vscode:grep:
+    desc: "List any apt sources still containing the VS Code repo"
+    cmds:
+      - |
+        grep -R --line-number -E 'packages\.microsoft\.com/.*/code' \
+          /etc/apt/sources.list /etc/apt/sources.list.d /etc/apt/sources.list.d/*.sources || true
+  vscode:status:
+    desc: "Quick status for VS Code, repo and keyring"
+    cmds:
+      - |
+        echo "=== VS Code status ==="
+        if command -v code >/dev/null 2>&1; then
+          echo "✔ code found: $(code --version | head -n1)"
+        else
+          echo "✗ code not found in PATH"
+        fi
+        test -f /etc/apt/sources.list.d/vscode.list \
+          && echo "✔ repo file present" \
+          || echo "✗ repo file missing"
+        test -r /etc/apt/keyrings/microsoft.gpg \
+          && echo "✔ keyring present" \
+          || echo "✗ keyring missing"
