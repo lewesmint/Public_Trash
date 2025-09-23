@@ -128,19 +128,41 @@ tasks:
         fi
 
   14-check-registry:
-    desc: "14: Check what's in the container registry"
+    desc: "14: List all images (repo:tag) in the registry"
     cmds:
       - echo "Checking registry contents at {{.REGISTRY_IP}}..."
       - |
-        echo "=== ALL REPOSITORIES ==="
-        curl -s http://{{.REGISTRY_IP}}/v2/_catalog | jq -r '.repositories[]?' 2>/dev/null || curl -s http://{{.REGISTRY_IP}}/v2/_catalog
-        echo ""
+        PROTO="http"                     # or https
+        REG="{{.REGISTRY_IP}}"           # host[:port]
+        AUTH=""                          # e.g. -u user:pass if needed
 
-        echo "=== SERVICE IMAGES ==="
-        for service in $(echo "{{.SERVICES}}" | tr ',' ' '); do
-          echo "Checking {{.NAMESPACE}}/$service tags..."
-          curl -s http://{{.REGISTRY_IP}}/v2/{{.NAMESPACE}}/$service/tags/list | jq -r '.tags[]?' 2>/dev/null || curl -s http://{{.REGISTRY_IP}}/v2/{{.NAMESPACE}}/$service/tags/list
-          echo ""
+        # Grab all repositories
+        repos=$(curl -fsS $AUTH "$PROTO://$REG/v2/_catalog?n=1000" | jq -r '.repositories[]?' || true)
+
+        if [ -z "$repos" ]; then
+          echo "No repositories found (catalog disabled or empty)"
+          exit 0
+        fi
+
+        echo "=== IMAGE REFERENCES (registry/repo:tag) WITH TIMESTAMPS ==="
+        for repo in $repos; do
+          tags=$(curl -fsS $AUTH "$PROTO://$REG/v2/$repo/tags/list" | jq -r '.tags[]?' || true)
+          if [ -z "$tags" ]; then
+            echo "$REG/$repo: <no tags>"
+          else
+            for tag in $tags; do
+              # Get timestamp from manifest
+              timestamp=$(curl -fsS -I $AUTH "$PROTO://$REG/v2/$repo/manifests/$tag" \
+                -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+                | grep -i "^date:" | cut -d' ' -f2- | tr -d '\r' || echo "unknown")
+
+              if [ "$timestamp" != "unknown" ] && [ -n "$timestamp" ]; then
+                echo "$REG/$repo:$tag (pushed: $timestamp)"
+              else
+                echo "$REG/$repo:$tag"
+              fi
+            done
+          fi
         done
 
   15-registry-status:
@@ -159,24 +181,39 @@ tasks:
         echo ""
 
         echo "=== SERVICE IMAGE STATUS WITH TIMESTAMPS ==="
+
+        # Get all repositories from catalog
+        PROTO="http"
+        REG="{{.REGISTRY_IP}}"
+        AUTH=""
+        repos=$(curl -fsS $AUTH "$PROTO://$REG/v2/_catalog?n=1000" | jq -r '.repositories[]?' || true)
+
         for service in $(echo "{{.SERVICES}}" | tr ',' ' '); do
           echo -n "$service: "
 
-          # Check if repository exists
-          if curl -s http://{{.REGISTRY_IP}}/v2/{{.NAMESPACE}}/$service/tags/list >/dev/null 2>&1; then
-            # Get tags
-            tags=$(curl -s http://{{.REGISTRY_IP}}/v2/{{.NAMESPACE}}/$service/tags/list | jq -r '.tags[]?' 2>/dev/null)
+          # Find matching repository in catalog (could be service-name or namespace/service-name)
+          matching_repo=""
+          for repo in $repos; do
+            if [[ "$repo" == "$service" ]] || [[ "$repo" == *"/$service" ]]; then
+              matching_repo="$repo"
+              break
+            fi
+          done
+
+          if [ -n "$matching_repo" ]; then
+            # Get tags for the actual repository path
+            tags=$(curl -fsS $AUTH "$PROTO://$REG/v2/$matching_repo/tags/list" | jq -r '.tags[]?' || true)
             if [ -n "$tags" ]; then
               echo "✓ Available tags: $tags"
+              echo "    Repository: $REG/$matching_repo"
 
               # Get timestamp for each tag
               for tag in $tags; do
-                # Get the Date header from the manifest request
-                timestamp=$(curl -s -I "http://{{.REGISTRY_IP}}/v2/{{.NAMESPACE}}/$service/manifests/$tag" \
+                timestamp=$(curl -fsS -I $AUTH "$PROTO://$REG/v2/$matching_repo/manifests/$tag" \
                   -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-                  | grep -i "^date:" | cut -d' ' -f2- | tr -d '\r')
+                  | grep -i "^date:" | cut -d' ' -f2- | tr -d '\r' || echo "unknown")
 
-                if [ -n "$timestamp" ]; then
+                if [ "$timestamp" != "unknown" ] && [ -n "$timestamp" ]; then
                   echo "    └─ $tag: Pushed $timestamp"
                 else
                   echo "    └─ $tag: Timestamp unavailable"
@@ -202,6 +239,62 @@ tasks:
           else
             echo "✗ Not deployed"
           fi
+        done
+
+  16-verify-image-availability:
+    desc: "16: Verify that Kubernetes deployment images exist in registry"
+    cmds:
+      - echo "=== VERIFYING IMAGE AVAILABILITY ==="
+      - |
+        PROTO="http"
+        REG="{{.REGISTRY_IP}}"
+        AUTH=""
+
+        # Process each service
+        for service in $(echo "{{.SERVICES}}" | tr '\n' ' '); do
+          # Skip empty services
+          [[ -z "$service" ]] && continue
+
+          echo "Checking $service..."
+
+          # Get the image that Kubernetes is trying to use
+          if kubectl get deployment $service -n {{.NAMESPACE}} >/dev/null 2>&1; then
+            k8s_image=$(kubectl get deployment $service -n {{.NAMESPACE}} -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
+            echo "  K8s expects: $k8s_image"
+
+            # Parse the image reference (registry/repo:tag)
+            if [[ "$k8s_image" =~ ^([^/]+)/(.+):(.+)$ ]]; then
+              registry_part="${BASH_REMATCH[1]}"
+              repo_part="${BASH_REMATCH[2]}"
+              tag_part="${BASH_REMATCH[3]}"
+
+              echo "  Registry: $registry_part"
+              echo "  Repository: $repo_part"
+              echo "  Tag: $tag_part"
+
+              # Check if this exact image exists in registry
+              if curl -fsS $AUTH "$PROTO://$REG/v2/$repo_part/manifests/$tag_part" \
+                -H "Accept: application/vnd.docker.distribution.manifest.v2+json" >/dev/null 2>&1; then
+                echo "  SUCCESS: Image EXISTS in registry"
+              else
+                echo "  ERROR: Image NOT FOUND in registry"
+                echo "  Available tags for $repo_part:"
+                available_tags=$(curl -fsS $AUTH "$PROTO://$REG/v2/$repo_part/tags/list" 2>/dev/null | jq -r '.tags[]?' 2>/dev/null || echo "none")
+                if [ "$available_tags" != "none" ]; then
+                  for tag in $available_tags; do
+                    echo "     - $REG/$repo_part:$tag"
+                  done
+                else
+                  echo "     - No tags found for repository $repo_part"
+                fi
+              fi
+            else
+              echo "  WARNING: Could not parse image reference: $k8s_image"
+            fi
+          else
+            echo "  WARNING: Deployment not found in Kubernetes"
+          fi
+          echo ""
         done
 
   20-restart-all:
