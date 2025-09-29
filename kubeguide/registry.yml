@@ -1,0 +1,47 @@
+version: '3'
+
+vars:
+  REGISTRY_HOST: 'registry'
+  REGISTRY_PORT: '5000'
+  REGISTRY_NAME: 'registry'
+  REGISTRY_DATA_DIR: '/opt/registry/data'
+
+tasks:
+  setup-registry-if-local:
+    desc: Ensure a local Docker registry is running only if "registry" resolves to loopback
+    cmds:
+      - |
+        bash -eu -o pipefail -c '
+        host="{{.REGISTRY_HOST}}"
+        port="{{.REGISTRY_PORT}}"
+        name="{{.REGISTRY_NAME}}"
+        data_dir="{{.REGISTRY_DATA_DIR}}"
+
+        command -v docker >/dev/null || { echo "docker not found"; exit 1; }
+
+        ips="$(getent hosts "$host" | awk "{print \$1}")"
+        [ -n "$ips" ] || { echo "Could not resolve $host"; exit 1; }
+
+        non_local="$(printf "%s\n" $ips | grep -Ev "^(127\.|::1$)" || true)"
+        [ -z "$non_local" ] || { echo "$host resolves to non-loopback: $non_local"; exit 1; }
+
+        echo "$host resolves to loopback: $ips"
+
+        mkdir -p "$data_dir" 2>/dev/null || sudo mkdir -p "$data_dir"
+
+        if docker inspect -f "{{"{{.State.Running}}"}}" "$name" >/dev/null 2>&1; then
+          echo "Container $name already running."
+        elif docker inspect "$name" >/dev/null 2>&1; then
+          echo "Starting existing container $name ..."
+          docker start "$name" >/dev/null
+        else
+          echo "Creating registry container $name ..."
+          docker run -d --restart=always --name "$name" \
+            -p "${port}:5000" \
+            -v "${data_dir}:/var/lib/registry" \
+            registry:2 >/dev/null
+          echo "Container $name created."
+        fi
+
+        echo "Local registry ready at ${host}:${port} (insecure)."
+        '
