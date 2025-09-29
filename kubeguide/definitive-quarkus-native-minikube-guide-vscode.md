@@ -1,12 +1,12 @@
-# Definitive Guide: Deploying Native Quarkus Microservices on Minikube (Quarkus CLI Version)
+# Definitive Guide: Deploying Native Quarkus Microservices on Minikube (VS Code Extension Version)
 
 ## Overview
 
 This is the definitive "idiot's guide" for deploying native Quarkus microservices on minikube, starting from a plain Ubuntu Noble (24.04) installation. This guide combines comprehensive coverage with production-ready features and has been tested and validated on Ubuntu 24.04.3 LTS.
 
-**🆕 CLI VERSION**: This version uses the modern Quarkus CLI instead of Maven archetype commands for project creation.
+**🆕 VS CODE VERSION**: This version uses the Visual Studio Code Quarkus extension for a complete GUI-based development experience.
 
-**Target Audience**: Any developer with a fresh Ubuntu Noble system who needs to deploy a native Quarkus microservice to Kubernetes with production-ready patterns.
+**Target Audience**: Any developer with a fresh Ubuntu Noble system who prefers VS Code and wants to deploy a native Quarkus microservice to Kubernetes with production-ready patterns.
 
 **What You'll Build**: A native Quarkus REST microservice with multiple endpoints, comprehensive monitoring, security features, containerized and deployed to minikube with registry integration.
 
@@ -26,7 +26,7 @@ Before we start, let's understand the key concepts and why we're using this tech
 
 **Key Technologies:**
 - **Quarkus**: A modern Java framework designed for cloud-native applications, optimized for containers and Kubernetes
-- **Quarkus CLI**: Modern command-line tool for creating and managing Quarkus projects
+- **VS Code + Quarkus Extension**: Modern IDE with integrated Quarkus project management, debugging, and development tools
 - **Native Compilation**: Using GraalVM to compile Java code into a native executable (faster startup, lower memory usage)
 - **Minikube**: A tool that runs a single-node Kubernetes cluster locally for development and testing
 - **Microservice**: A small, independent service that handles specific business functionality
@@ -37,8 +37,8 @@ Before we start, let's understand the key concepts and why we're using this tech
 - **Fast Startup**: Native Quarkus apps start in milliseconds vs seconds for traditional Java
 - **Low Memory**: Uses 10x less memory than traditional Java applications
 - **Cloud Ready**: Perfect for serverless and microservices architectures
-- **Developer Friendly**: Hot reload, great tooling, and familiar Java ecosystem
-- **Modern Tooling**: Quarkus CLI provides the best developer experience
+- **Developer Friendly**: VS Code integration with hot reload, debugging, and visual project management
+- **GUI-Based Development**: No need to memorize command-line parameters
 
 **What We'll Build**: A REST API microservice that starts in ~50ms and uses ~20MB RAM, deployed to a local Kubernetes cluster.
 
@@ -161,88 +161,130 @@ rm minikube-linux-$ARCH
 minikube version
 ```
 
-### Step 7: Install Quarkus CLI
+### Step 7: Install Visual Studio Code
 
-**🆕 NEW STEP**: Install the modern Quarkus CLI for the best developer experience.
+**🆕 NEW STEP**: Install VS Code and essential Java/Quarkus extensions for the best development experience.
 
-**What this step does**: Installs JBang (Java scripting tool) and the Quarkus CLI, which provides modern project creation and management commands.
+**What this step does**: Installs VS Code and the necessary extensions for Java and Quarkus development.
 
 ```bash
-# Install JBang (required for Quarkus CLI)
-curl -Ls https://sh.jbang.dev | bash -s - trust add https://repo1.maven.org/maven2/io/quarkus/quarkus-cli/
+# Install VS Code from Microsoft repository
+wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg
+sudo install -o root -g root -m 644 packages.microsoft.gpg /etc/apt/trusted.gpg.d/
+sudo sh -c 'echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/trusted.gpg.d/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" > /etc/apt/sources.list.d/vscode.list'
 
-# Install Quarkus CLI
-curl -Ls https://sh.jbang.dev | bash -s - app install --fresh --force io.quarkus.platform:quarkus-cli:3.28.1:runner
-
-# Add JBang to PATH
-echo 'export PATH="$HOME/.jbang/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
+# Update package cache and install
+sudo apt update
+sudo apt install -y code
 
 # Verify installation
-quarkus version
-quarkus --help
+code --version
 ```
 
-**Expected Output**: Should show Quarkus CLI version 3.28.1 and available commands.
+### Step 8: Install VS Code Extensions
 
-### Step 8: Create Project Directory
+**What this step does**: Installs the essential VS Code extensions for Java and Quarkus development.
 
-**What this step does**: Creates a organized directory structure for our project.
+```bash
+# Install Java Extension Pack (includes Language Support for Java, Debugger, Test Runner, Maven, etc.)
+code --install-extension vscjava.vscode-java-pack
+
+# Install Quarkus Tools extension
+code --install-extension redhat.vscode-quarkus
+
+# Install additional helpful extensions
+code --install-extension ms-vscode.vscode-json
+code --install-extension redhat.vscode-yaml
+code --install-extension ms-kubernetes-tools.vscode-kubernetes-tools
+
+# Verify extensions are installed
+code --list-extensions | grep -E "(java|quarkus|kubernetes)"
+```
+
+**Expected Output**: Should show installed extensions including:
+- `vscjava.vscode-java-pack`
+- `redhat.vscode-quarkus`
+- `ms-kubernetes-tools.vscode-kubernetes-tools`
+
+### Step 9: Create Project Directory and Launch VS Code
+
+**What this step does**: Creates a organized directory structure for our project and opens VS Code.
 
 ```bash
 # Create project directory with proper structure
 mkdir -p ~/projects/quarkus-demo
 cd ~/projects/quarkus-demo
 
-# Verify location
-pwd
+# Launch VS Code in the project directory
+code .
 ```
 
-### Step 9: Generate Enhanced Quarkus Project with CLI
+**🔍 What Happens Next**: VS Code will open and may prompt you to:
+- Trust the workspace
+- Install recommended extensions (if any are missing)
+- Configure Java settings
 
-**🆕 UPDATED**: Uses the modern Quarkus CLI to generate a new Quarkus project with useful extensions pre-configured.
+### Step 10: Generate Enhanced Quarkus Project with VS Code
+
+**🆕 UPDATED**: Uses the VS Code Quarkus extension GUI to generate a new Quarkus project.
+
+**Visual Steps in VS Code:**
+
+1. **Open Command Palette**: Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
+
+2. **Run Quarkus Generate Command**: Type `Quarkus: Generate a Quarkus project` and select it
+
+3. **Configure Project Settings** in the wizard:
+   - **Tool**: Select `Maven`
+   - **Group Id**: Enter `com.example`
+   - **Artifact Id**: Enter `quarkus-native-app`
+   - **Version**: Keep default `1.0.0-SNAPSHOT`
+   - **Package Name**: Keep default `com.example`
+   - **Source Directory**: Keep default `src/main/java`
+   - **Resource Directory**: Keep default `src/main/resources`
+
+4. **Select Extensions**: Choose these extensions (use search to find them):
+   - ✅ `RESTEasy Reactive` (rest)
+   - ✅ `RESTEasy Reactive Jackson` (rest-jackson)
+   - ✅ `SmallRye Health` (smallrye-health)
+   - ✅ `Micrometer Registry Prometheus` (micrometer-registry-prometheus)
+   - ✅ `SmallRye OpenAPI` (smallrye-openapi)
+
+5. **Choose Location**: Select the current directory (`~/projects/quarkus-demo`)
+
+6. **Generate Project**: Click "Generate Project"
+
+**Alternative Command Line Approach** (if GUI doesn't work):
+```bash
+# Fallback to command line if VS Code wizard has issues
+mvn io.quarkus.platform:quarkus-maven-plugin:3.28.1:create \
+    -DprojectGroupId=com.example \
+    -DprojectArtifactId=quarkus-native-app \
+    -Dextensions="rest-jackson,rest,smallrye-health,micrometer-registry-prometheus,smallrye-openapi" \
+    -DbuildTool=maven
+```
+
+### Step 10.1: Open Generated Project in VS Code
 
 ```bash
-# Generate Quarkus project with comprehensive extensions using CLI
-quarkus create app com.example:quarkus-native-app \
-    --extension="rest-jackson,rest,smallrye-health,micrometer-registry-prometheus,smallrye-openapi" \
-    --gradle=false
-
-# Navigate to project directory
+# Navigate to the generated project
 cd quarkus-native-app
 
-# Verify project structure
-tree -L 3
+# Open the project in VS Code
+code .
 ```
 
-**🔍 What the CLI Creates:**
-- ✅ Complete project structure with Maven build files
-- ✅ REST endpoint with JAX-RS
-- ✅ Health check endpoints (`/q/health`)
-- ✅ Metrics collection (`/q/metrics`)
-- ✅ OpenAPI documentation (`/q/swagger-ui`)
-- ✅ JSON processing capabilities
-- ✅ Native build configuration
-- ✅ Sample Dockerfiles in `src/main/docker/` directory
-
-**Key Point**: The CLI gives you a **working foundation** that you then customize for your needs.
-
-### Step 9.1: Verify What Was Auto-Generated
-
-```bash
-# Check the main files created
-ls -la
-ls -la src/main/java/com/example/
-ls -la src/main/resources/
-ls -la src/test/java/com/example/
-
-# View the generated REST endpoint
-cat src/main/java/com/example/GreetingResource.java
-```
+**🔍 What VS Code Will Show:**
+- ✅ Complete project structure in Explorer panel
+- ✅ `pom.xml` with all dependencies configured
+- ✅ `src/main/java/com/example/GreetingResource.java` - Basic REST endpoint
+- ✅ `src/main/resources/application.properties` - Empty configuration file
+- ✅ Test files in `src/test/java/`
+- ✅ Maven wrapper scripts
 
 **🔍 IMPORTANT CLARIFICATION: What Files Are Auto-Generated vs Manual**
 
-When you run the Quarkus CLI create command, it **automatically creates**:
+The VS Code Quarkus extension **automatically creates**:
 - ✅ `pom.xml` - Complete with native build profile (NO CHANGES NEEDED)
 - ✅ `src/main/resources/application.properties` - **EMPTY FILE** (needs configuration)
 - ✅ `src/main/java/com/example/GreetingResource.java` - Basic REST endpoint
@@ -255,16 +297,11 @@ When you run the Quarkus CLI create command, it **automatically creates**:
 - 🔧 Production Dockerfile
 - 🔧 Kubernetes manifests
 
-### Step 9.2: Understanding the Generated POM.xml
+### Step 10.2: Understanding the Generated POM.xml
 
 **🔍 IMPORTANT: The generated `pom.xml` is COMPLETE and ready to use**
 
-```bash
-# View the complete pom.xml
-cat pom.xml
-```
-
-The CLI automatically includes:
+In VS Code, open `pom.xml` to see:
 - ✅ **Native build profile** with GraalVM configuration
 - ✅ **All requested extensions** properly configured
 - ✅ **Quarkus BOM** for dependency management
@@ -273,15 +310,17 @@ The CLI automatically includes:
 
 **You don't need to modify pom.xml at all!**
 
-## Part 2: Enhanced Application Development
+## Part 2: Enhanced Application Development in VS Code
 
-### Step 10: Create Enhanced REST Endpoints
+### Step 11: Create Enhanced REST Endpoints
 
 **What this step does**: Replaces the basic "Hello World" endpoint with production-ready endpoints that demonstrate real-world features.
 
-```bash
-# Create enhanced REST resource with multiple endpoints
-cat > src/main/java/com/example/GreetingResource.java << 'EOF'
+**In VS Code:**
+1. Open `src/main/java/com/example/GreetingResource.java`
+2. Replace the entire content with the enhanced version below:
+
+```java
 package com.example;
 
 import jakarta.ws.rs.GET;
@@ -381,8 +420,14 @@ public class GreetingResource {
         return metrics;
     }
 }
-EOF
 ```
+
+**🔍 VS Code Features You'll Notice:**
+- ✅ **Syntax Highlighting**: Java code is properly colored and formatted
+- ✅ **IntelliSense**: Auto-completion for Java APIs and Quarkus annotations
+- ✅ **Error Detection**: Red squiggles for any syntax errors
+- ✅ **Import Management**: Automatic import suggestions
+- ✅ **Code Navigation**: Click-to-definition for classes and methods
 
 **🔍 What These Endpoints Provide:**
 - **`/hello`** - Simple text response with request counting
@@ -392,16 +437,13 @@ EOF
 - **`/hello/echo/{message}`** - Message processing demonstration
 - **`/hello/metrics`** - Basic metrics collection
 
-### Step 11: Configure Application Properties
+### Step 12: Configure Application Properties in VS Code
 
-**Understanding Configuration Files:**
-- `application.properties` - Default configuration for all environments (STARTS EMPTY)
-- `application-prod.properties` - Production-specific overrides (CREATE IF NEEDED)
-- `application-dev.properties` - Development-specific overrides (CREATE IF NEEDED)
+**In VS Code:**
+1. Open `src/main/resources/application.properties`
+2. Replace the empty file with comprehensive configuration:
 
-```bash
-# Create comprehensive application configuration
-cat > src/main/resources/application.properties << 'EOF'
+```properties
 # Application Configuration
 quarkus.application.name=quarkus-native-app
 quarkus.application.version=1.0.0
@@ -451,32 +493,21 @@ quarkus.micrometer.export.prometheus.path=/metrics/prometheus
 # Production optimisations
 %prod.quarkus.log.level=INFO
 %prod.quarkus.log.console.json=false
-EOF
 ```
 
-**Enhanced Configuration Explanation:**
+**🔍 VS Code Features for Properties Files:**
+- ✅ **Syntax Highlighting**: Properties are properly colored
+- ✅ **Auto-completion**: Quarkus extension provides property suggestions
+- ✅ **Validation**: Invalid property names are highlighted
+- ✅ **Documentation**: Hover over properties to see descriptions
 
-**Native Build Options:**
-- `quarkus.native.container-build=true` - Build native image inside a container (recommended)
-- `quarkus.native.builder-image` - Specifies the builder image to use
+### Step 13: Create Comprehensive Tests in VS Code
 
-**Builder Image Options:**
-1. **Mandrel (Recommended)**: `quay.io/quarkus/ubi-quarkus-mandrel-builder-image:jdk-21`
-   - Red Hat's downstream distribution of GraalVM
-   - Optimized specifically for Quarkus applications
-   - Better support and stability for enterprise use
+**In VS Code:**
+1. Open `src/test/java/com/example/GreetingResourceTest.java`
+2. Replace with enhanced test suite:
 
-**Production Features:**
-- **Enhanced logging** with better formatting
-- **Profile-specific configurations** for dev vs prod
-- **Health UI** enabled for visual health monitoring
-- **Prometheus metrics** integration
-- **Swagger UI** for API documentation
-
-### Step 12: Create Comprehensive Tests
-
-```bash
-cat > src/test/java/com/example/GreetingResourceTest.java << 'EOF'
+```java
 package com.example;
 
 import io.quarkus.test.junit.QuarkusTest;
@@ -551,13 +582,11 @@ class GreetingResourceTest {
              .body("uptime", notNullValue());
     }
 }
-EOF
 ```
 
-### Step 13: Create Native Integration Test
+3. Create native integration test by creating `src/test/java/com/example/GreetingResourceIT.java`:
 
-```bash
-cat > src/test/java/com/example/GreetingResourceIT.java << 'EOF'
+```java
 package com.example;
 
 import io.quarkus.test.junit.QuarkusIntegrationTest;
@@ -566,48 +595,71 @@ import io.quarkus.test.junit.QuarkusIntegrationTest;
 class GreetingResourceIT extends GreetingResourceTest {
     // Execute the same tests but in native mode
 }
-EOF
 ```
 
-## Part 3: Development and Testing
+**🔍 VS Code Testing Features:**
+- ✅ **Test Runner**: Built-in test execution and results
+- ✅ **Debug Tests**: Set breakpoints and debug test failures
+- ✅ **Test Explorer**: Visual test tree in sidebar
+- ✅ **Coverage**: See test coverage highlights in code
 
-### Step 14: Test in Development Mode
+## Part 3: Development and Testing in VS Code
 
-**What this step does**: Runs the application in development mode with hot reload enabled, allowing you to test changes instantly.
+### Step 14: Test in Development Mode with VS Code
+
+**Method 1: Using VS Code Terminal**
+1. Open VS Code integrated terminal (`Ctrl+`` ` or `View > Terminal`)
+2. Run development mode:
 
 ```bash
 # Run in development mode with detailed logging
 ./mvnw clean quarkus:dev
-
-# The application will start with live reload enabled
-# Access the following URLs in your browser or curl:
-# http://localhost:8080/hello
-# http://localhost:8080/hello/YourName
-# http://localhost:8080/hello/info
-# http://localhost:8080/q/health
-# http://localhost:8080/q/swagger-ui
-
-# Press 'q' to quit development mode
 ```
 
-**🔍 Development Mode Features:**
-- **Hot Reload**: Changes to code are automatically recompiled and reloaded
-- **Live Coding**: No need to restart the application during development
-- **Dev UI**: Access development tools at http://localhost:8080/q/dev
-- **Automatic Test Running**: Tests run automatically when code changes
+**Method 2: Using VS Code Quarkus Commands**
+1. Open Command Palette (`Ctrl+Shift+P`)
+2. Type `Quarkus: Debug current Quarkus project`
+3. Select the command to start in debug mode
 
-### Step 15: Run Unit Tests
+**🔍 VS Code Development Mode Features:**
+- ✅ **Integrated Terminal**: See application logs directly in VS Code
+- ✅ **Hot Reload**: Changes to code are automatically recompiled
+- ✅ **Debug Integration**: Set breakpoints and debug live application
+- ✅ **Port Forwarding**: VS Code can automatically open browser tabs
+- ✅ **Problem Panel**: See compilation errors in Problems tab
 
+**Test URLs** (VS Code may auto-open these):
+- http://localhost:8080/hello
+- http://localhost:8080/hello/YourName
+- http://localhost:8080/hello/info
+- http://localhost:8080/q/health
+- http://localhost:8080/q/swagger-ui
+
+### Step 15: Run Unit Tests in VS Code
+
+**Method 1: Using Test Explorer**
+1. Open Test Explorer in sidebar (beaker icon)
+2. Click "Run All Tests" or run individual tests
+3. View results with green/red indicators
+
+**Method 2: Using Command Palette**
+1. `Ctrl+Shift+P` → `Java: Run Tests`
+2. Select test scope (all, current file, current method)
+
+**Method 3: Using Terminal**
 ```bash
 # Run all tests
 ./mvnw clean test
 
 # Run tests with detailed output
 ./mvnw clean test -Dquarkus.log.level=DEBUG
-
-# Run specific test class
-./mvnw test -Dtest=GreetingResourceTest
 ```
+
+**🔍 VS Code Testing Advantages:**
+- ✅ **Visual Results**: See pass/fail status in sidebar
+- ✅ **Inline Results**: Test results appear next to test methods
+- ✅ **Debug Tests**: Set breakpoints in test code
+- ✅ **Test Coverage**: See which code is covered by tests
 
 ### Step 16: Build and Test Native Executable
 
@@ -626,6 +678,7 @@ Native compilation transforms your Java application into a standalone executable
 - **Image Size**: ~80-120MB vs ~200-400MB for JVM
 - **CPU Usage**: Lower baseline CPU consumption
 
+**In VS Code Terminal:**
 ```bash
 # Build native executable (this takes 3-5 minutes)
 ./mvnw clean package -Dnative
@@ -649,13 +702,20 @@ curl http://localhost:8080/hello/info | jq .
 kill $NATIVE_PID
 ```
 
+**🔍 VS Code Native Build Features:**
+- ✅ **Build Progress**: See native compilation progress in terminal
+- ✅ **Error Highlighting**: Native build errors are highlighted
+- ✅ **Task Integration**: Can create VS Code tasks for native builds
+- ✅ **Output Parsing**: VS Code parses build output for navigation
+
 **🎯 Checkpoint: What We've Achieved So Far**
 
-✅ **Modern Project Setup**: Created with Quarkus CLI for best developer experience
+✅ **Modern IDE Setup**: VS Code with full Quarkus integration
+✅ **GUI Project Creation**: Visual project wizard with extension selection
 ✅ **Enhanced REST API**: 6 production-ready endpoints with JSON responses
 ✅ **Comprehensive Configuration**: Production-ready settings with profiles
 ✅ **Complete Test Suite**: Unit tests and integration tests for native builds
-✅ **Development Workflow**: Hot reload and live coding capabilities
+✅ **Integrated Development**: Hot reload, debugging, and visual testing
 ✅ **Native Compilation**: Ultra-fast startup and minimal memory usage
 
 **Performance Comparison:**
@@ -663,7 +723,7 @@ kill $NATIVE_PID
 - **Native Mode**: ~50ms startup, ~20-40MB memory
 - **Improvement**: 89x faster startup, 3.5x less memory usage!
 
-## Part 4: Containerization
+## Part 4: Containerization in VS Code
 
 ### **🔧 Why Containerization is Important:**
 
@@ -674,12 +734,13 @@ kill $NATIVE_PID
 - ✅ **Efficiency**: Only ~246MB total size vs GB-sized JVM containers
 - ✅ **Kubernetes Ready**: Perfect for cloud-native deployment
 
-### Step 17: Create Production-Ready Dockerfile
+### Step 17: Create Production-Ready Dockerfile in VS Code
 
-**What this step does**: Creates a multi-stage Dockerfile that builds a secure, minimal container with our native executable.
+**In VS Code:**
+1. Create new file: `Dockerfile` (right-click in Explorer → New File)
+2. Add the following content:
 
-```bash
-cat > Dockerfile << 'EOF'
+```dockerfile
 # Multi-stage build for native Quarkus application
 FROM registry.access.redhat.com/ubi8/ubi-minimal:8.10 AS builder
 
@@ -726,31 +787,28 @@ ENV JAVA_OPTS_APPEND="-Djava.util.logging.manager=org.jboss.logmanager.LogManage
 
 # Run the application
 ENTRYPOINT ["./application", "-Dquarkus.http.host=0.0.0.0"]
-EOF
 ```
 
-**Key Dockerfile Features Explained**:
-- **Multi-stage build**: Separates build tools from runtime for smaller final image
-- **UBI Minimal**: Red Hat's ultra-minimal base image (~40MB)
-- **Security**: Non-root user (1001), proper file permissions
-- **Health checks**: Automatic container health monitoring
-- **shadow-utils**: Required package for `useradd` command in UBI minimal
+**🔍 VS Code Dockerfile Features:**
+- ✅ **Syntax Highlighting**: Dockerfile commands are properly colored
+- ✅ **IntelliSense**: Auto-completion for Dockerfile instructions
+- ✅ **Linting**: Docker extension provides best practice suggestions
+- ✅ **Build Integration**: Can build images directly from VS Code
 
-### Step 18: Create .dockerignore
+### Step 18: Create .dockerignore in VS Code
 
-**What this step does**: Tells Docker to ignore everything except our native executable, making builds faster and more secure.
+**In VS Code:**
+1. Create new file: `.dockerignore`
+2. Add the following content:
 
-```bash
-cat > .dockerignore << 'EOF'
+```dockerignore
 *
 !target/quarkus-native-app-*-runner
-EOF
 ```
 
 ### Step 19: Build and Test Docker Image
 
-**What this step does**: Builds our container image and tests it thoroughly to ensure it works correctly with resource limits.
-
+**In VS Code Terminal:**
 ```bash
 # Build Docker image
 docker build -t quarkus-native-app:latest .
@@ -768,31 +826,21 @@ curl http://localhost:8080/hello
 curl http://localhost:8080/hello/info
 curl http://localhost:8080/q/health
 
-# Test health check
-docker ps --format "table {{.Names}}\t{{.Status}}" | grep quarkus-test
-
 # Stop container
 docker stop quarkus-test
-
-# Test with resource limits
-docker run --rm -p 8080:8080 --memory=64m --cpus=0.5 \
-  --name quarkus-limited quarkus-native-app:latest &
-
-sleep 5
-curl "http://localhost:8080/hello/info" | jq .runtime_stats
-
-# Stop container
-docker stop quarkus-limited
 ```
+
+**🔍 VS Code Docker Integration:**
+- ✅ **Docker Extension**: Manage containers, images, and registries
+- ✅ **Container Logs**: View container logs in VS Code terminal
+- ✅ **Image Management**: Build, tag, and push images from command palette
+- ✅ **Registry Integration**: Connect to Docker registries
 
 ## Part 5: Enhanced Local Registry Setup
 
-### Step 20: Configure Local Registry with Production Migration Path
+### Step 20: Configure Local Registry
 
-**⚠️ IMPORTANT: This step requires sudo privileges. You will be prompted for your password.**
-
-**What this step does**: Sets up a local Docker registry that mimics production registry behavior, enabling easy migration to production later.
-
+**In VS Code Terminal:**
 ```bash
 # Create registry directory
 sudo mkdir -p /opt/registry/data
@@ -812,7 +860,6 @@ docker run -d \
 # Verify registry is running
 docker ps | grep registry
 curl http://registry.local:5000/v2/
-# Should return: {}
 ```
 
 ### Step 21: Tag and Push Image to Local Registry
@@ -822,38 +869,27 @@ curl http://registry.local:5000/v2/
 docker tag quarkus-native-app:latest registry.local:5000/quarkus-native-app:latest
 docker tag quarkus-native-app:latest registry.local:5000/quarkus-native-app:1.0.0-SNAPSHOT
 
-# Add build timestamp tag for versioning
-BUILD_TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-docker tag quarkus-native-app:latest registry.local:5000/quarkus-native-app:build-$BUILD_TIMESTAMP
-
 # Push to local registry
 docker push registry.local:5000/quarkus-native-app:latest
 docker push registry.local:5000/quarkus-native-app:1.0.0-SNAPSHOT
-docker push registry.local:5000/quarkus-native-app:build-$BUILD_TIMESTAMP
 
 # Verify images in registry
 curl http://registry.local:5000/v2/quarkus-native-app/tags/list | jq .
-
-# Test pulling from registry
-docker rmi registry.local:5000/quarkus-native-app:latest
-docker pull registry.local:5000/quarkus-native-app:latest
 ```
 
-## Part 6: Enhanced Kubernetes Deployment with Minikube
+## Part 6: Kubernetes Deployment with VS Code
 
 ### Step 22: Start Minikube with Optimal Configuration
 
 ```bash
-# Start minikube with optimized settings AND insecure registry support
-# ⚠️ CRITICAL: The --insecure-registry flags are REQUIRED for local registry to work
+# Start minikube with insecure registry support
 minikube start \
   --driver=docker \
   --memory=4096 \
   --cpus=2 \
   --disk-size=20g \
   --kubernetes-version=v1.28.0 \
-  --insecure-registry="registry.local:5000" \
-  --insecure-registry="host.minikube.internal:5000"
+  --insecure-registry="registry.local:5000"
 
 # Enable useful addons
 minikube addons enable metrics-server
@@ -864,21 +900,6 @@ minikube addons enable ingress
 minikube status
 kubectl get nodes -o wide
 ```
-
-**🔧 Why Insecure Registry Configuration Is Critical:**
-
-Without the `--insecure-registry` flags, you'll encounter this error during Kubernetes deployment:
-```
-Failed to pull image "registry.local:5000/quarkus-native-app:1.0.0-SNAPSHOT":
-Error response from daemon: Get "https://registry.local:5000/v2/":
-http: server gave HTTP response to HTTPS client
-```
-
-**What This Means:**
-- Our local registry runs on HTTP (not HTTPS)
-- Kubernetes/Docker defaults to HTTPS for security
-- The insecure registry flags tell minikube to allow HTTP for our specific registry
-- This configuration must be set at minikube startup time (cannot be changed later)
 
 ### Step 23: Configure Minikube for Local Registry
 
@@ -892,20 +913,15 @@ minikube ssh "echo '$HOST_IP registry.local' | sudo tee -a /etc/hosts"
 
 # Verify minikube can reach registry
 minikube ssh "curl http://registry.local:5000/v2/"
-# Should return: {}
 ```
 
-### Step 24: Create Kubernetes Namespace and Configuration
+### Step 24: Create Kubernetes Manifests in VS Code
 
-```bash
-# Create dedicated namespace
-kubectl create namespace quarkus-demo
+**In VS Code:**
 
-# Set as default namespace for convenience
-kubectl config set-context --current --namespace=quarkus-demo
+1. **Create ConfigMap** - New file: `k8s-configmap.yaml`
 
-# Create ConfigMap for application configuration
-cat > k8s-configmap.yaml << 'EOF'
+```yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -916,17 +932,11 @@ data:
     quarkus.log.level=INFO
     quarkus.http.port=8080
     quarkus.http.host=0.0.0.0
-EOF
-
-# Apply ConfigMap
-kubectl apply -f k8s-configmap.yaml
 ```
 
-### Step 25: Create Production-Ready Kubernetes Manifests
+2. **Create Deployment** - New file: `k8s-deployment.yaml`
 
-```bash
-# Create comprehensive deployment manifest
-cat > k8s-deployment.yaml << 'EOF'
+```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -969,16 +979,12 @@ spec:
             port: 8080
           initialDelaySeconds: 10
           periodSeconds: 30
-          timeoutSeconds: 3
-          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /q/health/ready
             port: 8080
           initialDelaySeconds: 5
           periodSeconds: 10
-          timeoutSeconds: 3
-          failureThreshold: 3
         volumeMounts:
         - name: config
           mountPath: /work/config
@@ -987,11 +993,11 @@ spec:
       - name: config
         configMap:
           name: quarkus-native-app-config
-      restartPolicy: Always
-EOF
+```
 
-# Create service manifest
-cat > k8s-service.yaml << 'EOF'
+3. **Create Service** - New file: `k8s-service.yaml`
+
+```yaml
 apiVersion: v1
 kind: Service
 metadata:
@@ -1012,13 +1018,24 @@ spec:
     name: metrics
   selector:
     app: quarkus-native-app
-EOF
 ```
 
-### Step 26: Deploy to Kubernetes
+**🔍 VS Code Kubernetes Features:**
+- ✅ **YAML Support**: Syntax highlighting and validation for Kubernetes manifests
+- ✅ **Kubernetes Extension**: Manage clusters, deployments, and services
+- ✅ **IntelliSense**: Auto-completion for Kubernetes API objects
+- ✅ **Cluster Explorer**: Visual tree view of cluster resources
 
+### Step 25: Deploy to Kubernetes
+
+**In VS Code Terminal:**
 ```bash
+# Create namespace
+kubectl create namespace quarkus-demo
+kubectl config set-context --current --namespace=quarkus-demo
+
 # Apply all manifests
+kubectl apply -f k8s-configmap.yaml
 kubectl apply -f k8s-deployment.yaml
 kubectl apply -f k8s-service.yaml
 
@@ -1026,241 +1043,103 @@ kubectl apply -f k8s-service.yaml
 kubectl get deployments
 kubectl get pods
 kubectl get services
-
-# Wait for pods to be ready
-kubectl wait --for=condition=ready pod -l app=quarkus-native-app --timeout=300s
-
-# Check pod details
-kubectl describe pods -l app=quarkus-native-app
 ```
 
-### Step 27: Comprehensive Testing and Validation
+**🔍 VS Code Kubernetes Management:**
+- ✅ **Cluster Explorer**: See all resources in sidebar
+- ✅ **Resource Editing**: Edit manifests and apply changes
+- ✅ **Log Viewing**: View pod logs directly in VS Code
+- ✅ **Port Forwarding**: Forward ports with right-click menu
+
+### Step 26: Test and Validate Deployment
 
 ```bash
 # Test via port-forward
 kubectl port-forward service/quarkus-native-app-service 8080:80 &
-PORT_FORWARD_PID=$!
-
-# Wait for port-forward to establish
-sleep 3
 
 # Test all endpoints
-echo "Testing basic endpoint:"
 curl http://localhost:8080/hello
-
-echo -e "\nTesting info endpoint:"
 curl http://localhost:8080/hello/info | jq .
-
-echo -e "\nTesting health endpoint:"
 curl http://localhost:8080/q/health | jq .
 
-echo -e "\nTesting custom health endpoint:"
-curl http://localhost:8080/hello/health | jq .
-
-echo -e "\nTesting echo endpoint:"
-curl http://localhost:8080/hello/echo/kubernetes | jq .
-
-echo -e "\nTesting metrics endpoint:"
-curl http://localhost:8080/hello/metrics | jq .
-
 # Stop port-forward
-kill $PORT_FORWARD_PID 2>/dev/null || true
+pkill -f "kubectl port-forward"
 ```
 
-### Step 28: Monitor and Validate Deployment
+## Part 7: VS Code-Specific Troubleshooting
 
+### Common VS Code Issues and Solutions
+
+#### 1. Java Extension Issues
+
+**Problem**: Java extension not recognizing project or showing errors
+
+**Solution:**
 ```bash
-# Check resource usage
-kubectl top pods -n quarkus-demo
+# Reload VS Code window
+Ctrl+Shift+P → "Developer: Reload Window"
 
-# Check logs
-kubectl logs -l app=quarkus-native-app -n quarkus-demo --tail=50
+# Clean workspace
+Ctrl+Shift+P → "Java: Clean Workspace"
 
-# Check events
-kubectl get events -n quarkus-demo --sort-by=.metadata.creationTimestamp
-
-# Scale deployment
-kubectl scale deployment quarkus-native-app --replicas=3
-kubectl get pods -w
-
-# Scale back
-kubectl scale deployment quarkus-native-app --replicas=2
+# Verify Java installation
+Ctrl+Shift+P → "Java: Configure Runtime"
 ```
 
-### Step 29: Production Migration Preparation
+#### 2. Quarkus Extension Issues
 
+**Problem**: Quarkus commands not available or project generation fails
+
+**Solution:**
 ```bash
-# Create production-ready ingress (optional)
-cat > k8s-ingress.yaml << 'EOF'
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: quarkus-native-app-ingress
-  namespace: quarkus-demo
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
-spec:
-  rules:
-  - host: quarkus-native-app.local
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: quarkus-native-app-service
-            port:
-              number: 80
-EOF
+# Reinstall Quarkus extension
+Ctrl+Shift+P → "Extensions: Show Installed Extensions"
+# Uninstall and reinstall "Quarkus Tools"
 
-# Apply ingress
-kubectl apply -f k8s-ingress.yaml
-
-# Add to hosts file for testing
-echo "$(minikube ip) quarkus-native-app.local" | sudo tee -a /etc/hosts
-
-# Test via ingress
-curl http://quarkus-native-app.local/hello
+# Verify extension is active
+Ctrl+Shift+P → "Quarkus: Generate a Quarkus project"
+# Should show the command
 ```
 
-### Step 30: Update and Redeploy Procedures
+#### 3. Terminal Integration Issues
 
+**Problem**: Integrated terminal not working or showing wrong directory
+
+**Solution:**
 ```bash
-# Example update workflow
-echo "# Update and redeploy workflow
+# Reset terminal
+Ctrl+Shift+P → "Terminal: Kill All Terminals"
+# Then open new terminal: Ctrl+`
 
-# 1. Make code changes
-# 2. Rebuild native executable
-./mvnw clean package -Dnative
-
-# 3. Rebuild Docker image with new tag
-BUILD_TIMESTAMP=\$(date +%Y%m%d-%H%M%S)
-docker build -t quarkus-native-app:build-\$BUILD_TIMESTAMP .
-docker tag quarkus-native-app:build-\$BUILD_TIMESTAMP registry.local:5000/quarkus-native-app:build-\$BUILD_TIMESTAMP
-docker push registry.local:5000/quarkus-native-app:build-\$BUILD_TIMESTAMP
-
-# 4. Update deployment
-kubectl set image deployment/quarkus-native-app quarkus-native-app=registry.local:5000/quarkus-native-app:build-\$BUILD_TIMESTAMP
-
-# 5. Monitor rollout
-kubectl rollout status deployment/quarkus-native-app
-
-# 6. Verify deployment
-kubectl get pods
-curl http://localhost:8080/hello/info | jq .version
-"
+# Check terminal shell
+# File → Preferences → Settings → Search "terminal shell"
 ```
 
-## Part 8: Comprehensive Troubleshooting Guide
+## Part 8: Summary and Production Migration
 
-### Common Issues and Solutions
+### 🎯 **What You've Accomplished with VS Code**
 
-#### 0. Minikube Startup and Connection Issues
+✅ **Modern IDE Setup**: Full VS Code integration with Quarkus tooling
+✅ **GUI Project Creation**: Visual project wizard with extension selection
+✅ **Enhanced Development**: IntelliSense, debugging, hot reload, visual testing
+✅ **Integrated Containerization**: Docker management within VS Code
+✅ **Kubernetes Integration**: Visual cluster management and deployment
+✅ **Production-Ready Application**: Native compilation with optimal performance
 
-**Problem**: Minikube gets stuck during startup or becomes unresponsive
+### VS Code Advantages Summary
 
-**Common Symptoms:**
-- `minikube start` hangs on "🔥 Creating docker container" or "🐳 Preparing Kubernetes"
-- Commands don't respond or produce no output
-- Container creation fails with certificate errors
-- "Updating container" loops indefinitely
-
-**Solution 1: Complete Clean Restart (Most Effective)**
-```bash
-# Kill any stuck processes
-pkill -f minikube || true
-
-# Force stop and clean everything
-minikube stop --force
-minikube delete --all --purge
-docker kill minikube 2>/dev/null || true
-docker rm minikube 2>/dev/null || true
-sudo rm -rf ~/.minikube
-
-# Start fresh with correct configuration
-minikube start \
-  --driver=docker \
-  --memory=4096 \
-  --cpus=2 \
-  --disk-size=20g \
-  --kubernetes-version=v1.28.0 \
-  --insecure-registry="registry.local:5000"
-```
-
-#### 1. Quarkus CLI Installation Issues
-
-**Problem**: `quarkus` command not found or JBang issues
-
-```bash
-# Verify JBang installation
-jbang version
-
-# Reinstall Quarkus CLI if needed
-jbang app install --fresh --force io.quarkus.platform:quarkus-cli:3.28.1:runner
-
-# Add to PATH if missing
-echo 'export PATH="$HOME/.jbang/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-#### 2. ImagePullBackOff - Registry HTTPS/HTTP Mismatch (CRITICAL)
-
-**Problem**: Pods fail to pull images with `ImagePullBackOff` error
-
-**Symptoms:**
-```bash
-kubectl get pods
-# Shows: ImagePullBackOff or ErrImagePull
-
-kubectl describe pod <pod-name>
-# Shows: "http: server gave HTTP response to HTTPS client"
-```
-
-**Solution**: Restart minikube with insecure registry configuration
-```bash
-# This is CRITICAL - minikube MUST be started with insecure registry flags
-minikube stop
-minikube start \
-  --driver=docker \
-  --memory=4096 \
-  --cpus=2 \
-  --insecure-registry="registry.local:5000" \
-  --insecure-registry="host.minikube.internal:5000"
-
-# Verify the fix worked:
-kubectl delete pods --all -n quarkus-demo
-# Pods should restart and pull images successfully
-```
-
-## Part 9: Summary and Production Migration
-
-### 🎯 **What You've Accomplished**
-
-✅ **Modern Development Setup**: Quarkus CLI for optimal developer experience
-✅ **Enhanced REST API**: 6 production-ready endpoints with comprehensive features
-✅ **Native Compilation**: Ultra-fast startup (50ms) and minimal memory usage (20MB)
-✅ **Containerization**: Secure, minimal containers with health checks
-✅ **Local Registry Integration**: Easy migration path to production
-✅ **Kubernetes Deployment**: Production-ready manifests with monitoring and scaling
-✅ **Comprehensive Testing**: Unit tests, integration tests, and deployment validation
-✅ **Troubleshooting Knowledge**: Solutions for common issues
+- **✅ Visual Project Management**: GUI-based project creation and extension management
+- **✅ Integrated Development**: Everything in one interface - coding, testing, debugging
+- **✅ Rich Extensions**: Kubernetes, Docker, Java, and Quarkus extensions
+- **✅ Modern Developer Experience**: IntelliSense, error highlighting, integrated terminal
+- **✅ Debugging Integration**: Set breakpoints in both JVM and native modes
+- **✅ Git Integration**: Built-in version control with visual diff and merge tools
 
 ### Performance Achievements
 
 - **Startup Time**: < 0.1 seconds (vs ~3-5 seconds for JVM)
 - **Memory Usage**: ~20-40MB (vs ~100-200MB for JVM)
 - **Image Size**: ~80-120MB (vs ~200-400MB for JVM)
-- **Resource Efficiency**: Can run with 32MB memory limits
+- **Developer Productivity**: Significantly improved with VS Code integration
 
-### Production Migration Path
-
-To migrate to production Kubernetes:
-
-1. **Replace local registry** with production registry (Harbor, ECR, GCR, etc.)
-2. **Update image references** in k8s-deployment.yaml
-3. **Configure proper ingress** with TLS certificates
-4. **Set up monitoring and alerting**
-5. **Configure persistent storage** if needed
-6. **Implement CI/CD pipeline** for automated deployments
-
-This guide provides a complete, production-ready workflow for deploying native Quarkus microservices on Kubernetes, with clear migration paths and comprehensive troubleshooting guidance.
+This guide provides a complete, production-ready workflow for deploying native Quarkus microservices on Kubernetes using VS Code, with comprehensive IDE integration and visual development tools.
