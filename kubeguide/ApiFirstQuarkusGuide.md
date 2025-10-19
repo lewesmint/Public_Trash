@@ -101,7 +101,7 @@ echo $JAVA_HOME
 
 **Short answer: No, you don't need to install the Quarkus CLI for this guide.**
 
-All Quarkus commands in this guide use Maven plugins (e.g., `mvn io.quarkus.platform:quarkus-maven-plugin:3.10.0:create` or `./mvnw quarkus:dev`), which download and run Quarkus automatically. You never need to install Quarkus separately.
+All Quarkus commands in this guide use Maven plugins (e.g., `mvn io.quarkus.platform:quarkus-maven-plugin:3.28.4:create` or `./mvnw quarkus:dev`), which download and run Quarkus automatically. You never need to install Quarkus separately.
 
 ### When You MIGHT Want the Quarkus CLI
 
@@ -116,7 +116,7 @@ quarkus add extension rest
 
 **Without Quarkus CLI (Maven-based, what this guide uses):**
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.10.0:create -DprojectGroupId=com.example -DprojectArtifactId=my-app
+mvn io.quarkus.platform:quarkus-maven-plugin:3.28.4:create -DprojectGroupId=com.example -DprojectArtifactId=my-app
 ./mvnw quarkus:dev
 ./mvnw quarkus:add-extension -Dextensions=rest
 ```
@@ -246,14 +246,21 @@ docker run -it --rm \
 
 The parent project is a container that will hold your API and service modules. It's not a runnable application itself—it just coordinates the build of all your modules and manages shared dependencies and versions.
 
-**What this command does:**
-- Creates a Maven project with `<packaging>pom</packaging>` (a parent/aggregator project)
-- Creates only a `pom.xml` file with no source directories
-- Uses the standard Maven POM archetype (designed specifically for parent projects)
+You have two options for creating the parent project:
 
-### Option A: Using Maven Archetype (Recommended - No cleanup needed)
+- **Option A (Maven Archetype)**: Uses the standard Maven approach for creating parent POMs. It's cleaner (no unwanted files generated) but requires a couple of extra manual steps to add the Quarkus BOM and Maven wrapper.
 
-This creates a clean parent POM with no source files:
+- **Option B (Quarkus Plugin)**: Uses the Quarkus tooling which is faster and automatically includes the Quarkus BOM and Maven wrapper, but it generates example source code that you'll need to delete since a parent project shouldn't contain any application code.
+
+**Choose one option and follow all its steps:**
+
+---
+
+### Option A: Using Maven Archetype (Recommended - Clean, No Cleanup Needed)
+
+This approach uses the standard Maven POM archetype designed specifically for parent projects. It creates only a `pom.xml` file with no source code.
+
+#### Step 1: Create the parent project
 
 ```bash
 mvn archetype:generate \
@@ -268,11 +275,13 @@ mvn archetype:generate \
 cd my-new-service-parent
 ```
 
-Then add the Quarkus BOM to the generated `pom.xml`. Open `pom.xml` and add this inside the `<project>` tag:
+#### Step 2: Add the Quarkus BOM
+
+Open `pom.xml` and add this inside the `<project>` tag:
 
 ```xml
 <properties>
-  <quarkus.platform.version>3.10.0</quarkus.platform.version>
+  <quarkus.platform.version>3.28.4</quarkus.platform.version>
   <maven.compiler.source>21</maven.compiler.source>
   <maven.compiler.target>21</maven.compiler.target>
   <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -291,61 +300,9 @@ Then add the Quarkus BOM to the generated `pom.xml`. Open `pom.xml` and add this
 </dependencyManagement>
 ```
 
-### Option B: Using Quarkus Plugin (Requires cleanup)
+#### Step 3: Verify packaging is set to `pom`
 
-This is simpler but generates unwanted source files that you'll need to delete:
-
-```bash
-mvn -N io.quarkus.platform:quarkus-maven-plugin:3.10.0:create \
-  -DprojectGroupId=com.example.nevada \
-  -DprojectArtifactId=my-new-service-parent \
-  -DplatformVersion=3.10.0 \
-  -Dextensions=""
-cd my-new-service-parent
-```
-
-> **Note:** Despite the `-N` flag and empty extensions, this command may still generate a `src/` directory with example code. You'll need to delete it in the next step.
-
----
-
-## Important: Verify the Parent Project
-
-After creating the parent project, verify its structure.
-
-### 1. Check for Unwanted Source Files (Option B only)
-
-**If you used Option A (Maven archetype):** Skip this step—no cleanup needed!
-
-**If you used Option B (Quarkus plugin):** The parent may have generated unwanted source files.
-
-**Check what was created:**
-```bash
-ls -la src/ 2>/dev/null && echo "WARNING: src/ directory exists in parent!" || echo "Good: No src/ directory"
-```
-
-**If the `src/` directory exists, DELETE it:**
-```bash
-# Remove the entire src directory if it exists
-rm -rf src/
-```
-
-> **Note:** You may see `.mvn/wrapper/MavenWrapperDownloader.java` when searching for Java files—that's fine! It's part of the Maven wrapper infrastructure, not application code. We're only concerned with the `src/` directory.
-
-The parent is just a container—it should have no application source code.
-
-### 2. Verify Parent Packaging is Set to `pom`
-
-Open the parent `pom.xml` and ensure it contains the following line after the `<version>` tag:
-
-```xml
-<packaging>pom</packaging>
-```
-
-**If you used Option A (Maven archetype):** This is already set correctly.
-
-**If you used Option B (Quarkus plugin):** Verify it's present. If missing, add it manually.
-
-Your parent `pom.xml` should look like this at the top:
+Ensure your `pom.xml` has `<packaging>pom</packaging>` after the `<version>` tag:
 
 ```xml
 <project ...>
@@ -357,15 +314,106 @@ Your parent `pom.xml` should look like this at the top:
   ...
 ```
 
-### 3. Verify the Parent Structure
+This should already be set correctly by the archetype.
 
-**If you used Option A (Maven archetype):**
+At this point, your directory should look like this:
+
 ```
 my-new-service-parent/
 └── pom.xml
 ```
 
-**If you used Option B (Quarkus plugin):**
+#### Step 4: Add the Maven wrapper
+
+The archetype doesn't create a Maven wrapper, so add it now:
+
+```bash
+mvn wrapper:wrapper -Dmaven=3.9.6
+```
+
+This creates the `mvnw`, `mvnw.cmd`, and `.mvn/wrapper/` files.
+
+#### Step 5: Verify the final structure
+
+> **Tip:** Use `tree -a` to show hidden directories (those starting with `.`) and their contents:
+> ```bash
+> tree -a
+> ```
+
+After adding the wrapper, your parent directory should now look like this:
+
+```
+my-new-service-parent/
+├── pom.xml
+├── mvnw
+├── mvnw.cmd
+└── .mvn/
+    └── wrapper/
+        └── maven-wrapper.properties
+```
+
+> **Note:** The newer Maven wrapper plugin (3.3.4+) no longer generates `maven-wrapper.jar` in the `.mvn/wrapper/` directory by default. Instead, it downloads the JAR on first use. This is normal and the wrapper will work correctly.
+
+**No `src/` directory should exist.**
+
+**Done!** Proceed to Step 2.
+
+---
+
+### Option B: Using Quarkus Plugin (Simpler but Requires Cleanup)
+
+This approach is faster but generates unwanted source files that you'll need to delete.
+
+#### Step 1: Create the parent project
+
+```bash
+mvn -N io.quarkus.platform:quarkus-maven-plugin:3.28.4:create \
+  -DprojectGroupId=com.example.nevada \
+  -DprojectArtifactId=my-new-service-parent \
+  -DplatformVersion=3.28.4 \
+  -Dextensions=""
+
+cd my-new-service-parent
+```
+
+> **Note:** Despite the `-N` flag and empty extensions, this command will generate a `src/` directory with example code because the Quarkus plugin is designed to create runnable applications.
+
+#### Step 2: Delete unwanted source files
+
+Check for unwanted files:
+
+```bash
+ls -la src/ 2>/dev/null && echo "WARNING: src/ directory exists in parent!" || echo "Good: No src/ directory"
+```
+
+If the `src/` directory exists, delete it:
+
+```bash
+rm -rf src/
+```
+
+> **Note:** You may see `.mvn/wrapper/MavenWrapperDownloader.java` when searching for Java files—that's fine! It's part of the Maven wrapper infrastructure, not application code. We're only concerned with the `src/` directory.
+
+#### Step 3: Verify packaging is set to `pom`
+
+Open the parent `pom.xml` and ensure it contains `<packaging>pom</packaging>` after the `<version>` tag:
+
+```xml
+<project ...>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example.nevada</groupId>
+  <artifactId>my-new-service-parent</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  ...
+```
+
+This should already be set correctly by the Quarkus plugin.
+
+#### Step 4: Verify the structure
+
+Your parent directory should now look like this:
+
 ```
 my-new-service-parent/
 ├── pom.xml
@@ -377,22 +425,11 @@ my-new-service-parent/
         └── maven-wrapper.properties
 ```
 
-**In both cases: No `src/` directory should exist in the parent.**
+**No `src/` directory should exist.**
 
-### 4. Add Maven Wrapper (Option A only)
+**Done!** Proceed to Step 2.
 
-If you used Option A, you don't have a Maven wrapper yet. Add it now:
-
-```bash
-mvn wrapper:wrapper -Dmaven=3.9.6
-```
-
-This creates the `mvnw`, `mvnw.cmd`, and `.mvn/wrapper/` files.
-
-> **Why Option B generates source files:**
-> Despite using `-N` and `extensions=""`, the Quarkus Maven plugin is designed to create runnable applications, so it generates example code. Option A uses the standard Maven POM archetype which is specifically designed for parent projects, so it doesn't generate any source code.
-
-Now proceed to Step 2.
+---
 
 ---
 
@@ -401,22 +438,83 @@ Now proceed to Step 2.
 > **Before you run the next command:**
 > Make sure you are in your parent project directory (e.g., `cd my-new-service-parent`).
 
+> **Note:** This guide uses the **standalone OpenAPI Generator Maven plugin** rather than the Quarkus OpenAPI Generator extension. The standalone plugin gives you full control over package names and code generation options, which the Quarkus extension doesn't support.
+
+### Step 1: Create the API Module
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.10.0:create \
+./mvnw io.quarkus.platform:quarkus-maven-plugin:3.28.4:create \
   -DprojectGroupId=com.example.nevada.api \
   -DprojectArtifactId=my-new-service-api \
+  -DplatformVersion=3.28.4 \
   -DnoCode
 ```
 
-> **Note:** The `-DnoCode` option tells Quarkus **not to generate any default resource or example code** in the new module. This is important for API-first development, where you want the code to be generated only from your OpenAPI spec, not from Quarkus templates.
+**What this does:**
+- Creates a new module directory `my-new-service-api/` with its own `pom.xml`
+- **Automatically adds the module to the parent `pom.xml`** in a `<modules>` section
+- The `-DnoCode` option tells Quarkus **not to generate any default resource or example code** - you only want code generated from your OpenAPI spec
 
-- In `my-new-service-api`, create `src/main/openapi/my-new-service.yaml` with your OpenAPI spec. See example below:
+After running this, your parent `pom.xml` will be updated to include:
 
-> **Tip:** To create the OpenAPI YAML file and all necessary parent directories in one line, use:
+```xml
+<modules>
+  <module>my-new-service-api</module>
+</modules>
+```
+
+This tells Maven that `my-new-service-api` is part of the multi-module build.
+
+### Step 2: Fix the API Module POM
+
+**IMPORTANT:** The `quarkus:create` command generates a module with its own `<dependencyManagement>` section and `quarkus.platform.*` properties. This is redundant since the module inherits from the parent POM, and it's a Maven best practice to manage versions only in the parent.
+
+Open `my-new-service-api/pom.xml` and **remove** the entire `<dependencyManagement>` section and the `quarkus.platform.*` properties:
+
+**Remove these lines:**
+```xml
+<properties>
+    ...
+    <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+    <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+    <quarkus.platform.version>3.28.4</quarkus.platform.version>  <!-- REMOVE THIS! -->
+    ...
+</properties>
+
+<dependencyManagement>  <!-- REMOVE THIS ENTIRE SECTION! -->
+    <dependencies>
+        <dependency>
+            <groupId>${quarkus.platform.group-id}</groupId>
+            <artifactId>${quarkus.platform.artifact-id}</artifactId>
+            <version>${quarkus.platform.version}</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+```
+
+The module will inherit the Quarkus version from the parent's `<dependencyManagement>` section instead, keeping version management centralized.
+
+### Step 3: Create the OpenAPI Specification
+
+Create the OpenAPI spec file:
+
+```bash
+# From the parent directory (my-new-service-parent):
+cd my-new-service-api
+mkdir -p src/main/openapi
+```
+
+Now create the file `src/main/openapi/my-new-service.yaml`:
+
+> **Tip:** From the `my-new-service-api` directory, you can create the empty file and all necessary parent directories in one command using:
 > ```bash
 > install -D /dev/null src/main/openapi/my-new-service.yaml
 > ```
+> This creates an empty file and any missing parent directories.
+
+**Important:** Open `src/main/openapi/my-new-service.yaml` in your editor and paste in the following OpenAPI specification:
 
 ```yaml
 openapi: 3.0.3
@@ -449,62 +547,178 @@ components:
           type: string
 ```
 
-- Add the Quarkus OpenAPI Generator extension to the API module:
+### Step 4: Add Required Dependencies and Configure Code Generation
 
-```bash
-cd my-new-service-api
-../mvnw quarkus:add-extension -Dextensions="quarkus-openapi-generator,quarkus-rest-client-jackson"
-cd ..
+The Quarkus OpenAPI Generator extension has a known limitation where it doesn't respect package configuration. Instead, we'll use the **standalone OpenAPI Generator Maven plugin** which gives full control over package names and code generation.
+
+**Edit `my-new-service-api/pom.xml`** and add the following dependencies in the `<dependencies>` section:
+
+```xml
+<dependencies>
+    <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-arc</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-rest-client-jackson</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-rest</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>jakarta.validation</groupId>
+        <artifactId>jakarta.validation-api</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>io.smallrye</groupId>
+        <artifactId>smallrye-open-api-core</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-junit5</artifactId>
+        <scope>test</scope>
+    </dependency>
+</dependencies>
 ```
 
-This ensures all required dependencies are present for code generation.
+**What these dependencies provide:**
+- `quarkus-arc` - CDI dependency injection
+- `quarkus-rest-client-jackson` - JSON serialisation/deserialisation
+- `quarkus-rest` - JAX-RS REST endpoints support
+- `jakarta.validation-api` - Bean validation annotations
+- `smallrye-open-api-core` - MicroProfile OpenAPI annotations used by generated code
 
-- In `my-new-service-api/src/main/resources/application.properties`, configure code generation:
+Now add the **OpenAPI Generator Maven plugin** in the `<build><plugins>` section, **before** the `quarkus-maven-plugin`:
 
-```properties
-# Spec-specific configuration (required for Quarkus 3.x)
-quarkus.openapi-generator.codegen.spec.my_new_service_yaml.base-package=com.example.nevada.api.mynewservice
-quarkus.openapi-generator.codegen.spec.my_new_service_yaml.additional-api-type-annotations=@jakarta.ws.rs.Path("/")
+```xml
+<build>
+    <plugins>
+        <plugin>
+            <groupId>org.openapitools</groupId>
+            <artifactId>openapi-generator-maven-plugin</artifactId>
+            <version>7.5.0</version>
+            <executions>
+                <execution>
+                    <id>generate-server</id>
+                    <goals>
+                        <goal>generate</goal>
+                    </goals>
+                    <configuration>
+                        <inputSpec>${project.basedir}/src/main/openapi/my-new-service.yaml</inputSpec>
+                        <generatorName>jaxrs-spec</generatorName>
+                        <configOptions>
+                            <apiPackage>com.example.nevada.api</apiPackage>
+                            <modelPackage>com.example.nevada.api.model</modelPackage>
+                            <library>quarkus</library>
+                            <dateLibrary>java8</dateLibrary>
+                            <generateBuilders>true</generateBuilders>
+                            <openApiNullable>false</openApiNullable>
+                            <useBeanValidation>true</useBeanValidation>
+                            <generatePom>false</generatePom>
+                            <interfaceOnly>true</interfaceOnly>
+                            <returnResponse>true</returnResponse>
+                            <sourceFolder>.</sourceFolder>
+                            <useJakartaEe>true</useJakartaEe>
+                            <useMicroProfileOpenAPIAnnotations>true</useMicroProfileOpenAPIAnnotations>
+                            <useSwaggerAnnotations>false</useSwaggerAnnotations>
+                        </configOptions>
+                        <output>${project.build.directory}/generated-sources/openapi</output>
+                    </configuration>
+                </execution>
+            </executions>
+        </plugin>
+        <plugin>
+            <groupId>io.quarkus.platform</groupId>
+            <artifactId>quarkus-maven-plugin</artifactId>
+            <version>${quarkus.platform.version}</version>
+            <!-- rest of quarkus-maven-plugin configuration -->
+        </plugin>
+        <!-- other plugins -->
+    </plugins>
+</build>
 ```
 
-> **Important Configuration Notes:**
-> - The configuration format changed in newer Quarkus versions. Use `spec.<spec-file-name-with-underscores>.<property>` format.
-> - The spec file name in the configuration uses underscores: `my_new_service_yaml` (not `my-new-service.yaml`).
-> - The `additional-api-type-annotations` adds the `@Path` annotation to the generated API interface, which is required for JAX-RS.
-> - If you are using a different Quarkus or plugin version, check the [Quarkus OpenAPI Generator documentation](https://quarkus.io/guides/openapi-generator) for the latest configuration options.
+**Key configuration options:**
+- `apiPackage` - Package for generated API interfaces (e.g., `com.example.nevada.api`)
+- `modelPackage` - Package for generated model classes (e.g., `com.example.nevada.api.model`)
+- `library: quarkus` - Generates Quarkus-compatible code
+- `interfaceOnly: true` - Only generates interfaces, not implementations
+- `useMicroProfileOpenAPIAnnotations: true` - Adds MicroProfile OpenAPI annotations
+- `useJakartaEe: true` - Uses Jakarta EE packages (required for Quarkus 3.x)
 
-- Run code generation:
+### Step 5: Generate API Code from the OpenAPI Spec
+
+Now that you have the OpenAPI spec and plugin configuration in place, generate the Java interfaces and model classes.
 
 > **Note:** JAVA_HOME must be set to your JDK installation path for this step to work. If JAVA_HOME is not set, code generation may fail even if previous Maven or Quarkus commands worked. See [Troubleshooting: JAVA_HOME](#5-troubleshooting) below for help.
 
-**Run this command from the `my-new-service-parent` directory:**
+> **Before running the next command:**
+> Make sure you're in the parent project directory. If you're still in the `my-new-service-api` directory from the previous step, navigate back:
+> ```bash
+> cd ..
+> ```
+
+**From the `my-new-service-parent` directory, run:**
 
 ```bash
-./mvnw -pl my-new-service-api quarkus:generate-code
+./mvnw -pl my-new-service-api clean compile
 ```
 
-This ensures code is generated in the correct module using the parent Maven wrapper.
+**What this does:**
+- `-pl my-new-service-api` tells Maven to run the command only in the API module
+- `clean` removes any previous build outputs
+- `compile` triggers the OpenAPI Generator plugin (during the generate-sources phase) and then compiles the generated code
+- Uses the parent Maven wrapper to ensure consistent Maven version
 
-- Generated sources will appear in `target/generated-sources/open-api`.
+### Step 6: Verify the Generated Code
 
-> **What Gets Generated:**
-> Based on the example OpenAPI spec above, you should see:
-> - `com/example/nevada/api/mynewservice/api/GreetingApi.java` - The API interface (from the `tags` field)
-> - `com/example/nevada/api/mynewservice/model/HelloResponse.java` - The response model (from the schema name)
->
-> If you see `DefaultApi.java` or `Hello200Response.java` instead, the configuration didn't apply correctly. Check that:
-> 1. The property names match exactly (including `my_new_service_yaml` with underscores)
-> 2. The `application.properties` file is in `src/main/resources/`
-> 3. You're using the spec-specific configuration format shown above
+**IMPORTANT:** The generated code is placed in `my-new-service-api/target/generated-sources/openapi/`, **NOT** in `src/main/java/`.
+
+- The `target/` directory is where Maven puts all build outputs (compiled classes, generated sources, etc.)
+- **Do NOT manually edit files in `target/`** - they are regenerated every time you run the build
+- The generated code is automatically included in the compilation classpath
+- You will **implement** these generated interfaces in your service module's `src/main/java/` directory (in Step 3)
+
+Check the generated files:
+
+```bash
+# From: my-new-service-parent/
+tree my-new-service-api/target/generated-sources/openapi/ -I 'src|.openapi-generator|.dockerignore|README.md'
+```
+
+**Expected package structure:**
+```
+my-new-service-api/target/generated-sources/openapi/
+└── com
+    └── example
+        └── nevada
+            ├── RestApplication.java
+            ├── RestResourceRoot.java
+            └── api
+                ├── HelloApi.java
+                └── model
+                    └── HelloResponse.java
+```
+
+**This is the correct structure** - the code is generated in your configured packages (`com.example.nevada.api` and `com.example.nevada.api.model`).
+
+When you implement your service in Step 3, you'll import from these packages:
+```java
+import com.example.nevada.api.HelloApi;
+import com.example.nevada.api.model.HelloResponse;
+```
 
 ---
 
 ## 3. Create the Service Module
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.10.0:create \
+./mvnw io.quarkus.platform:quarkus-maven-plugin:3.28.4:create \
   -DprojectGroupId=com.example.nevada.svc \
   -DprojectArtifactId=my-new-service \
+  -DplatformVersion=3.28.4 \
   -DnoCode
 ```
 
@@ -520,17 +734,49 @@ This allows your service implementation to use the interfaces and DTOs generated
 </dependency>
 ```
 
+### Clean Up the Service Module POM
+
+Just like the API module, the service module also has redundant `<dependencyManagement>` and `quarkus.platform.*` properties that should be removed.
+
+Open `my-new-service/pom.xml` and **remove** the entire `<dependencyManagement>` section and the `quarkus.platform.*` properties:
+
+**Remove these lines:**
+```xml
+<properties>
+    ...
+    <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+    <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+    <quarkus.platform.version>3.28.4</quarkus.platform.version>  <!-- REMOVE THIS! -->
+    ...
+</properties>
+
+<dependencyManagement>  <!-- REMOVE THIS ENTIRE SECTION! -->
+    <dependencies>
+        <dependency>
+            <groupId>${quarkus.platform.group-id}</groupId>
+            <artifactId>${quarkus.platform.artifact-id}</artifactId>
+            <version>${quarkus.platform.version}</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+```
+
+The module will inherit the Quarkus version from the parent's `<dependencyManagement>` section.
+
 - Add Quarkus REST and JSON extensions:
 
 For Quarkus 3.x, use the following extension names (the older `quarkus-resteasy-reactive` and `quarkus-resteasy-reactive-jackson` are no longer used):
 
 ```bash
+# From the parent directory (my-new-service-parent):
 cd my-new-service
-../mvnw quarkus:add-extension -Dextensions="quarkus-rest,quarkus-rest-jackson"
+../mvnw quarkus:add-extension -Dextensions="quarkus-rest,quarkus-rest-jackson,quarkus-smallrye-openapi"
 cd ..
 ```
 
-This will add REST and JSON support to your service module.
+This will add REST, JSON, and OpenAPI support to your service module. The `quarkus-smallrye-openapi` extension enables the `/q/openapi` and `/q/swagger-ui` endpoints for testing your API.
 
 - Implement the generated interfaces (from the API module) in your service code under `src/main/java`.
 
@@ -541,13 +787,15 @@ Create `my-new-service/src/main/java/com/example/nevada/svc/GreetingResource.jav
 ```java
 package com.example.nevada.svc;
 
-import com.example.nevada.api.mynewservice.api.GreetingApi;
-import com.example.nevada.api.mynewservice.model.HelloResponse;
+import com.example.nevada.api.HelloApi;
+import com.example.nevada.api.model.HelloResponse;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.ws.rs.Path;
 import jakarta.ws.rs.core.Response;
 
+@Path("/hello")
 @ApplicationScoped
-public class GreetingResource implements GreetingApi {
+public class GreetingResource implements HelloApi {
 
     @Override
     public Response hello() {
@@ -558,7 +806,9 @@ public class GreetingResource implements GreetingApi {
 }
 ```
 
-> **Note:** The class name and package can be whatever you want. What matters is that it implements the generated API interface (`GreetingApi` in this example).
+> **Important:** You must add the `@Path("/hello")` annotation to the implementation class, even though the interface already has it. This is required for JAX-RS to properly register the resource endpoint.
+
+> **Note on naming:** The implementation class is named `GreetingResource`, but it implements `HelloApi` (which was generated from the `Greeting` tag in the OpenAPI spec). The implementation class name doesn't need to match the interface name or tag name - you can name it whatever makes sense for your service. What matters is that it implements the generated API interface.
 
 ---
 
@@ -591,7 +841,319 @@ cd my-new-service
 
 ---
 
-## 5. Troubleshooting:
+## 5. Verifying API Contract Enforcement
+
+One of the key benefits of API-first development is that the service implementation is **forced** to follow the API contract. Let's verify this is working.
+
+### How We Know the Service Follows the API
+
+#### 1. Compile-Time Contract Enforcement
+
+The service class **implements the generated API interface**:
+
+```java
+@Path("/hello")
+@ApplicationScoped
+public class GreetingResource implements HelloApi {
+    @Override
+    public Response hello() {
+        HelloResponse response = new HelloResponse();
+        response.setMessage("Hello from My New Service!");
+        return Response.ok(response).build();
+    }
+}
+```
+
+**Key points:**
+- If the method signature doesn't match the interface, the code won't compile
+- If you forget to implement a method, the code won't compile
+- If you change the return type, the code won't compile
+
+#### 2. The API Interface Defines the Contract
+
+The generated `HelloApi` interface (in `my-new-service-api/target/generated-sources/openapi/com/example/nevada/api/HelloApi.java`):
+
+```java
+@Path("/hello")
+public interface HelloApi {
+    @GET
+    @Produces({ "application/json" })
+    @org.eclipse.microprofile.openapi.annotations.Operation(operationId = "hello", ...)
+    Response hello();
+}
+```
+
+This interface was generated from your OpenAPI spec and defines:
+- The HTTP method (`@GET`)
+- The path (`@Path("/hello")`)
+- The response type (`Response`)
+- The content type (`@Produces({ "application/json" })`)
+
+#### 3. Runtime Verification
+
+Test the endpoint:
+
+```bash
+curl http://localhost:8080/hello
+```
+
+Expected response:
+```json
+{"message":"Hello from My New Service!"}
+```
+
+This matches the `HelloResponse` schema defined in your OpenAPI spec.
+
+#### 4. What Happens If You Break the Contract?
+
+The compiler will catch violations. Here are examples that **won't compile**:
+
+**Example 1: Wrong return type**
+```java
+public String hello() {  // ❌ Won't compile - must return Response
+    return "Hello";
+}
+// Error: The return type is incompatible with HelloApi.hello()
+```
+
+**Example 2: Wrong method signature**
+```java
+public Response hello(String name) {  // ❌ Won't compile - interface has no parameters
+    ...
+}
+// Error: The method hello(String) of type GreetingResource must override or implement a supertype method
+```
+
+**Example 3: Missing implementation**
+```java
+public class GreetingResource implements HelloApi {
+    // ❌ Won't compile - must implement hello()
+}
+// Error: The type GreetingResource must implement the inherited abstract method HelloApi.hello()
+```
+
+#### 5. Key Benefits
+
+✅ **Type safety**: Compiler enforces the contract
+✅ **No drift**: Service can't deviate from the API spec
+✅ **Refactoring safety**: If you change the OpenAPI spec and regenerate, any breaking changes will cause compile errors
+✅ **Documentation accuracy**: The OpenAPI spec is always the source of truth
+
+This is the **core value of API-first development** - the contract is enforced at compile time, not just documented!
+
+---
+
+## 6. Adding a New Endpoint (API-First Workflow)
+
+Let's add a new endpoint to demonstrate the full API-first workflow and see how the contract enforcement works.
+
+> **Prerequisites for this section:**
+> - Make sure you're in the parent project directory (`my-new-service-parent`)
+> - **If you still have `quarkus:dev` running from Section 4, stop it now** by pressing `Ctrl+C` in the terminal where it's running
+> - We need to stop it to avoid port conflicts and to clearly demonstrate the compilation error in the next steps
+
+### Step 1: Update the OpenAPI Specification
+
+Edit `my-new-service-api/src/main/openapi/my-new-service.yaml` and add a new operation to the existing `/hello` path:
+
+```yaml
+openapi: 3.0.3
+info:
+  title: My New Service API
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080
+    description: Development server
+paths:
+  /hello:
+    get:
+      operationId: hello
+      tags:
+        - Greeting
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HelloResponse'
+
+    post:
+      operationId: greetPerson
+      tags:
+        - Greeting
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GreetingRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GreetingResponse'
+
+components:
+  schemas:
+    HelloResponse:
+      type: object
+      properties:
+        message:
+          type: string
+
+    GreetingRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+
+    GreetingResponse:
+      type: object
+      properties:
+        greeting:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+```
+
+> **Important:** We're adding a **POST** operation to the same `/hello` path. This will add a new method to the existing `HelloApi` interface, which will cause a compilation error in `HelloResource` until we implement it.
+
+### Step 2: Regenerate the API Code
+
+From the parent directory:
+
+```bash
+./mvnw -pl my-new-service-api clean compile
+```
+
+This will regenerate the `HelloApi` interface with the new `greetPerson` method.
+
+### Step 3: Install the Updated API Module
+
+**IMPORTANT:** Before we can see the compilation error in the service module, we need to install the updated API module into the local Maven repository. Otherwise, the service module will continue using the old version of the API.
+
+```bash
+./mvnw -pl my-new-service-api install
+```
+
+This ensures the service module will pick up the new `HelloApi` interface with the `greetPerson` method.
+
+### Step 4: Observe the Compilation Error
+
+Now try to build the service module with a clean build to see the compilation error:
+
+```bash
+./mvnw -pl my-new-service clean compile
+```
+
+> **Note:** We use `clean compile` here to force a rebuild. Without `clean`, Maven might report "Nothing to compile - all classes are up to date" because it doesn't detect that the API interface has changed.
+
+**You'll see a compilation error:**
+
+```
+[ERROR] /path/to/my-new-service/src/main/java/com/example/nevada/svc/GreetingResource.java:[11,8]
+GreetingResource is not abstract and does not override abstract method greetPerson(GreetingRequest) in HelloApi
+```
+
+This is **exactly what we want!** The compiler is enforcing the API contract. The `HelloApi` interface now has a new method `greetPerson(GreetingRequest)` that `GreetingResource` must implement.
+
+**This demonstrates the power of API-first development:** You cannot deploy code that doesn't match the API contract - the compiler prevents it!
+
+### Step 5: Implement the New Endpoint
+
+Update `my-new-service/src/main/java/com/example/nevada/svc/GreetingResource.java` to implement the new method:
+
+```java
+package com.example.nevada.svc;
+
+import com.example.nevada.api.HelloApi;
+import com.example.nevada.api.model.GreetingRequest;
+import com.example.nevada.api.model.GreetingResponse;
+import com.example.nevada.api.model.HelloResponse;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.core.Response;
+import java.time.OffsetDateTime;
+
+@Path("/hello")
+@ApplicationScoped
+public class GreetingResource implements HelloApi {
+
+    @Override
+    public Response hello() {
+        HelloResponse response = new HelloResponse();
+        response.setMessage("Hello from My New Service!");
+        return Response.ok(response).build();
+    }
+
+    @Override
+    public Response greetPerson(GreetingRequest greetingRequest) {
+        GreetingResponse response = new GreetingResponse();
+        response.setGreeting("Hello, " + greetingRequest.getName() + "!");
+        response.setTimestamp(OffsetDateTime.now());
+        return Response.ok(response).build();
+    }
+}
+```
+
+> **Note:** The OpenAPI Generator creates one API interface per path. Since we added a POST operation to the existing `/hello` path, it added the `greetPerson` method to the existing `HelloApi` interface. Our `GreetingResource` class must implement both methods.
+
+### Step 6: Build and Test
+
+Build the service:
+
+```bash
+./mvnw -pl my-new-service compile
+```
+
+**Now it compiles successfully!** ✅
+
+Run the service in dev mode:
+
+```bash
+cd my-new-service
+../mvnw quarkus:dev
+```
+
+Test both endpoints:
+
+```bash
+# Test the GET endpoint
+curl http://localhost:8080/hello
+
+# Expected response:
+# {"message":"Hello from My New Service!"}
+
+# Test the new POST endpoint
+curl -X POST http://localhost:8080/hello \
+  -H "Content-Type: application/json" \
+  -d '{"name":"World"}'
+
+# Expected response:
+# {"greeting":"Hello, World!","timestamp":"2025-10-18T02:10:30.123Z"}
+```
+
+### Step 7: What We Learned
+
+This workflow demonstrates:
+
+1. **API-first approach**: We defined the API contract in the OpenAPI spec first
+2. **Code generation**: The API interface was automatically generated with the new method
+3. **Compile-time enforcement**: The service wouldn't compile until we implemented the new method
+4. **Type safety**: The generated `GreetingResponse` class ensures we return the correct structure
+5. **No drift**: It's impossible for the service to deviate from the API contract
+
+**This is the power of API-first development with code generation!**
+
+---
+
+## 7. Troubleshooting
 
 ### 1. JAVA_HOME Not Set
 
@@ -657,7 +1219,7 @@ Then re-run the code generation command from the parent directory.
 
 ---
 
-## 6. Best Practices for OpenAPI Specs
+## 8. Best Practices for OpenAPI Specs
 
 To get clean, well-named generated code:
 
@@ -666,7 +1228,7 @@ To get clean, well-named generated code:
    paths:
      /hello:
        get:
-         tags: [Greeting]  # Generates GreetingApi.java
+         tags: [Greeting]  # Generates HelloApi.java (from the tag name)
    ```
 
 2. **Define schemas in `components/schemas`** instead of inline:
@@ -691,40 +1253,13 @@ To get clean, well-named generated code:
 
 ---
 
-## 7. Workflow: Updating Your API
-
-When you need to change your API:
-
-1. **Update the OpenAPI spec** in `my-new-service-api/src/main/openapi/my-new-service.yaml`
-
-2. **Regenerate the code** (from parent directory):
-   ```bash
-   ./mvnw -pl my-new-service-api clean quarkus:generate-code
-   ```
-
-3. **Rebuild the API module**:
-   ```bash
-   ./mvnw -pl my-new-service-api install
-   ```
-
-4. **Update your implementation** in the service module to match the new interface
-
-5. **Test the changes**:
-   ```bash
-   cd my-new-service
-   ../mvnw quarkus:dev
-   ```
-
-> **Tip:** If you add new operations or change method signatures, your IDE will show compilation errors in the service module until you update the implementation. This is the API-first contract enforcement in action!
-
----
-
-## 8. Summary
+## 9. Summary
 
 - The API module holds the OpenAPI spec and generated code.
 - The service module implements the API.
 - You can update the spec, regenerate code, and keep API and implementation cleanly separated.
-- Always use spec-specific configuration format: `quarkus.openapi-generator.codegen.spec.<spec-name>.<property>`
+- Use the standalone OpenAPI Generator Maven plugin for full control over package names and code generation options.
+- Generated code appears in `target/generated-sources/openapi/` in your configured packages (e.g., `com.example.nevada.api`).
 
 This is a true API-first, multi-module Quarkus setup.
 
