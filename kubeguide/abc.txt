@@ -1,0 +1,4 @@
+./scripts/install-keycloak-standalone.sh --mode mkcert
+./scripts/install-keycloak-standalone.sh --mode self-signed
+./scripts/install-keycloak-standalone.sh --mode none
+./scripts/install-keycloak-standalone.sh --mode mkcert --fresh
