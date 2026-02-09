@@ -1,0 +1,130 @@
+TEST-ENUM-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, Unsigned32, enterprises
+        FROM SNMPv2-SMI
+    MODULE-COMPLIANCE, OBJECT-GROUP
+        FROM SNMPv2-CONF;
+
+testEnumMIB MODULE-IDENTITY
+    LAST-UPDATED "202602060000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "MIB for testing inline enum handling with no zero value"
+    REVISION     "202602060000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 }
+
+testEnumObjects OBJECT IDENTIFIER ::= { testEnumMIB 1 }
+
+-- ============================================================
+-- Scalars
+-- ============================================================
+
+testScalars OBJECT IDENTIFIER ::= { testEnumObjects 1 }
+
+testColour OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    red(1),
+                    green(2),
+                    blue(3),
+                    yellow(4)
+                }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "A colour with no zero value in the enumeration"
+    ::= { testScalars 1 }
+
+testPriority OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    low(10),
+                    medium(20),
+                    high(30),
+                    critical(50)
+                }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Priority with non-contiguous values starting well above zero"
+    ::= { testScalars 2 }
+
+-- ============================================================
+-- Table
+-- ============================================================
+
+testEnumTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF TestEnumEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table for testing inline enums"
+    ::= { testEnumObjects 2 }
+
+testEnumEntry OBJECT-TYPE
+    SYNTAX      TestEnumEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "An entry in the test enum table"
+    INDEX       { testEnumIndex }
+    ::= { testEnumTable 1 }
+
+TestEnumEntry ::= SEQUENCE {
+    testEnumIndex       Unsigned32,
+    testRowColour       INTEGER,
+    testRowPriority     INTEGER
+}
+
+testEnumIndex OBJECT-TYPE
+    SYNTAX      Unsigned32 (1..4294967295)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Row index"
+    ::= { testEnumEntry 1 }
+
+testRowColour OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    red(1),
+                    green(2),
+                    blue(3),
+                    yellow(4)
+                }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "A colour column with no zero value in the enumeration"
+    ::= { testEnumEntry 2 }
+
+testRowPriority OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    low(10),
+                    medium(20),
+                    high(30),
+                    critical(50)
+                }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Priority column with non-contiguous values"
+    ::= { testEnumEntry 3 }
+
+-- ============================================================
+-- Conformance
+-- ============================================================
+
+testEnumConformance OBJECT IDENTIFIER ::= { testEnumMIB 2 }
+
+testEnumGroup OBJECT-GROUP
+    OBJECTS {
+        testColour,
+        testPriority,
+        testRowColour,
+        testRowPriority
+    }
+    STATUS  current
+    DESCRIPTION "Test objects"
+    ::= { testEnumConformance 1 }
+
+testEnumCompliance MODULE-COMPLIANCE
+    STATUS  current
+    DESCRIPTION "Compliance"
+    MODULE
+        MANDATORY-GROUPS { testEnumGroup }
+    ::= { testEnumConformance 2 }
+
+END
