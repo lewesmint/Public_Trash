@@ -1,0 +1,14 @@
+@app.get("/mibs")
+def list_mibs() -> dict[str, Any]:
+    """List all MIBs implemented by the agent."""
+    # Load all schema files from mock-behaviour directory
+    from app.cli_load_model import load_all_schemas
+    import os
+
+    schema_dir = "mock-behaviour"
+    if not os.path.exists(schema_dir):
+        return {"count": 0, "mibs": []}
+
+    schemas = load_all_schemas(schema_dir)
+    mibs = sorted(list(schemas.keys()))
+    return {"count": len(mibs), "mibs": mibs}
